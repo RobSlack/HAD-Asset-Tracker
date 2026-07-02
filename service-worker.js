@@ -1,6 +1,7 @@
-// Tagbook service worker — caches the app shell so it opens offline.
-// Data still syncs to SharePoint via the flows when a connection is available.
-const CACHE = 'tagbook-v1';
+// Tagbook service worker — makes the app installable and available offline.
+// HTML is network-first (so updates appear when online); other assets cache-first.
+// Bump CACHE when you ship a new version to retire old caches.
+const CACHE = 'tagbook-v2';
 const SHELL = [
   './',
   './index.html',
@@ -26,18 +27,36 @@ self.addEventListener('activate', (event) => {
 self.addEventListener('fetch', (event) => {
   const req = event.request;
 
-  // Never cache the Power Automate flow calls — always hit the network so data is live.
+  // Never touch the Power Automate flow calls — always live network.
   if (req.url.includes('powerplatform.com') || req.method !== 'GET') {
-    return; // let the browser handle it normally
+    return;
   }
 
-  // App shell / same-origin assets: cache-first, fall back to network.
+  const isHTML =
+    req.mode === 'navigate' ||
+    req.url.endsWith('/') ||
+    req.url.endsWith('index.html');
+
+  if (isHTML) {
+    // Network-first: get the freshest page, fall back to cache when offline.
+    event.respondWith(
+      fetch(req)
+        .then((res) => {
+          const copy = res.clone();
+          caches.open(CACHE).then((c) => c.put(req, copy)).catch(() => {});
+          return res;
+        })
+        .catch(() => caches.match(req).then((c) => c || caches.match('./index.html')))
+    );
+    return;
+  }
+
+  // Other same-origin assets: cache-first, then network.
   event.respondWith(
     caches.match(req).then((cached) => {
       if (cached) return cached;
       return fetch(req)
         .then((res) => {
-          // cache successful same-origin GETs for next time
           if (res && res.ok && req.url.startsWith(self.location.origin)) {
             const copy = res.clone();
             caches.open(CACHE).then((c) => c.put(req, copy)).catch(() => {});
