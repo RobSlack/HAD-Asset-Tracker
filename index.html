@@ -208,6 +208,19 @@
     flex-direction:column; align-items:center; justify-content:center; gap:4px;
   }
   .photo-add-btn:hover{background:var(--bg); border-color:var(--accent);}
+  .photo-capture-row{display:flex; gap:8px; flex-wrap:wrap; margin-top:10px;}
+  .photo-cap{padding:8px 12px; font-size:12.5px;}
+  .photo-cap#btnCapTagSerial{background:var(--ink); color:#fff; border-color:var(--ink);}
+  .photo-thumb .plabel{
+    position:absolute; top:3px; left:3px; background:rgba(30,34,38,0.72); color:#fff;
+    font-size:8.5px; padding:1px 5px; border-radius:4px; font-family:'IBM Plex Mono';
+  }
+  .photo-thumb .psync{
+    position:absolute; top:3px; right:3px; width:14px; height:14px; border-radius:50%;
+    display:flex; align-items:center; justify-content:center; font-size:9px; color:#fff;
+  }
+  .photo-thumb .psync.done{background:var(--accent);}
+  .photo-thumb .psync.pending{background:var(--amber);}
 
   /* ---- Inventory ---- */
   .inv-toolbar{display:flex;gap:10px;margin-bottom:16px;flex-wrap:wrap;}
@@ -470,12 +483,16 @@
           <div class="countdown-hint" id="leaseHint"></div>
         </div>
         <div class="field full photo-section">
-          <label>Condition photos</label>
-          <p class="hint" style="margin:0;">Useful for lease returns — capture the item's condition now and again over time.</p>
+          <label>Photos</label>
+          <p class="hint" style="margin:0;">Capture the asset tag and serial (and condition for lease returns). Photos sync to SharePoint when photo sync is set up.</p>
           <input type="file" id="fPhotoInput" accept="image/*" capture="environment" multiple style="display:none;">
-          <div class="photo-strip" id="photoStrip">
-            <button type="button" class="photo-add-btn" id="btnAddPhoto">+<br>Add photo</button>
+          <div class="photo-capture-row">
+            <button type="button" class="btn photo-cap" id="btnCapTagSerial">⌑ Tag + Serial</button>
+            <button type="button" class="btn photo-cap" data-label="Asset tag">Tag</button>
+            <button type="button" class="btn photo-cap" data-label="Serial">Serial</button>
+            <button type="button" class="btn photo-cap" data-label="Condition">Condition</button>
           </div>
+          <div class="photo-strip" id="photoStrip"></div>
         </div>
         <div class="field full">
           <label for="fNotes">Notes</label>
@@ -538,6 +555,14 @@
       <div class="url-field">
         <label for="cfgDelete">Delete asset URL</label>
         <input type="text" id="cfgDelete" placeholder="https://…/workflows/…/triggers/manual/paths/invoke?api-version=1&amp;sp=…&amp;sv=1.0&amp;sig=…" spellcheck="false">
+      </div>
+      <div class="url-field">
+        <label for="cfgUploadPhoto">Upload photo URL <span style="font-weight:400;color:var(--ink-faint);">(optional — for photo sync)</span></label>
+        <input type="text" id="cfgUploadPhoto" placeholder="https://…/workflows/…/invoke?api-version=1&amp;sp=…&amp;sv=1.0&amp;sig=…" spellcheck="false">
+      </div>
+      <div class="url-field">
+        <label for="cfgGetPhotos">Get photos URL <span style="font-weight:400;color:var(--ink-faint);">(optional — for photo sync)</span></label>
+        <input type="text" id="cfgGetPhotos" placeholder="https://…/workflows/…/invoke?api-version=1&amp;sp=…&amp;sv=1.0&amp;sig=…" spellcheck="false">
       </div>
 
       <div class="form-actions">
@@ -629,12 +654,13 @@
   let html5QrCode = null;
   let dataReady = false;
   let formPhotos = []; // {id, dataUrl, dateTaken} for the asset currently in the form
-  let cfg = { get:'', save:'', del:'' }; // flow URLs; empty = local-only mode
+  let cfg = { get:'', save:'', del:'', uploadPhoto:'', getPhotos:'' }; // flow URLs; empty = local-only mode
 
   const $ = (id) => document.getElementById(id);
   const grid = $('invGrid');
 
   function isConnected(){ return !!(cfg.get && cfg.save && cfg.del); }
+  function hasPhotoSync(){ return isConnected() && !!(cfg.uploadPhoto && cfg.getPhotos); }
 
   // ---------- activity log ----------
   let logEntries = [];
@@ -702,7 +728,7 @@
   // GitHub Pages site is public and these URLs are keys to your SharePoint.
   // Each device enters them once in Settings; they are then saved locally on
   // that device only. (For a private host you could paste them back in here.)
-  const DEFAULT_FLOWS = { get:'', save:'', del:'' };
+  const DEFAULT_FLOWS = { get:'', save:'', del:'', uploadPhoto:'', getPhotos:'' };
 
   async function loadConfig(){
     let stored = null;
@@ -712,20 +738,22 @@
     }catch(e){ /* none yet */ }
 
     if(stored && stored.disconnected){
-      // user explicitly chose local-only — honour it, don't re-seed defaults
       cfg.get = ''; cfg.save = ''; cfg.del = '';
+      cfg.uploadPhoto = stored.uploadPhoto || ''; cfg.getPhotos = stored.getPhotos || '';
     }else if(stored && (stored.get || stored.save || stored.del)){
-      // a saved config exists — use it as-is
       cfg.get = stored.get || ''; cfg.save = stored.save || ''; cfg.del = stored.del || '';
+      cfg.uploadPhoto = stored.uploadPhoto || ''; cfg.getPhotos = stored.getPhotos || '';
     }else{
-      // first run: seed from the built-in defaults and persist them
       cfg.get = DEFAULT_FLOWS.get; cfg.save = DEFAULT_FLOWS.save; cfg.del = DEFAULT_FLOWS.del;
+      cfg.uploadPhoto = DEFAULT_FLOWS.uploadPhoto; cfg.getPhotos = DEFAULT_FLOWS.getPhotos;
       try{ await storage.set('flow-config', JSON.stringify(cfg), true); }catch(e){}
     }
 
     $('cfgGet').value = cfg.get;
     $('cfgSave').value = cfg.save;
     $('cfgDelete').value = cfg.del;
+    $('cfgUploadPhoto').value = cfg.uploadPhoto;
+    $('cfgGetPhotos').value = cfg.getPhotos;
     setConnBadge(isConnected() ? 'online' : 'local');
   }
 
@@ -733,11 +761,11 @@
     cfg.get = $('cfgGet').value.trim();
     cfg.save = $('cfgSave').value.trim();
     cfg.del = $('cfgDelete').value.trim();
-    // if all three are blank, record an explicit "disconnected" choice so the
-    // built-in defaults don't get re-seeded on the next load
+    cfg.uploadPhoto = $('cfgUploadPhoto').value.trim();
+    cfg.getPhotos = $('cfgGetPhotos').value.trim();
     const payload = isConnected()
-      ? { get:cfg.get, save:cfg.save, del:cfg.del }
-      : { get:'', save:'', del:'', disconnected:true };
+      ? { get:cfg.get, save:cfg.save, del:cfg.del, uploadPhoto:cfg.uploadPhoto, getPhotos:cfg.getPhotos }
+      : { get:'', save:'', del:'', uploadPhoto:cfg.uploadPhoto, getPhotos:cfg.getPhotos, disconnected:true };
     try{
       await storage.set('flow-config', JSON.stringify(payload), true);
     }catch(e){
@@ -931,11 +959,25 @@
   }
   async function queueDelete(id){
     assets = assets.filter(a=>a.id !== id);
-    // a delete cancels any pending save for the same id
-    outbox = outbox.filter(o=>o.id !== id);
+    // a delete cancels any pending save or photo upload for the same id
+    outbox = outbox.filter(o=> o.id !== id && o.tagId !== id);
     outbox.push({ op:'delete', id:id, ts:Date.now() });
     await saveCache();
     await saveOutbox();
+  }
+
+  // queue any not-yet-synced photos of an asset for upload
+  async function queuePhotoUploads(tagId, photos){
+    let added = 0;
+    photos.forEach(p=>{
+      if(p.synced) return;
+      if(p.remoteName) return; // came from server already
+      const key = tagId + '::' + p.id;
+      if(outbox.some(o=>o.op==='photo' && o.key===key)) return;
+      outbox.push({ op:'photo', key:key, tagId:tagId, photoId:p.id, ts:Date.now() });
+      added++;
+    });
+    if(added) await saveOutbox();
   }
 
   // low-level SharePoint calls (throw on any failure)
@@ -968,6 +1010,20 @@
     logEvent('success', 'Deleted "' + id + '" from SharePoint.', '');
   }
 
+  // upload one queued photo, then mark it synced in the local cache
+  async function syncOnePhoto(op){
+    const photos = await loadPhotosFor(op.tagId);
+    const photo = photos.find(p=>p.id === op.photoId);
+    if(!photo){ return; } // photo was removed before it uploaded — nothing to do
+    await pushPhoto(op.tagId, photo);       // throws (with .network flag) on failure
+    photo.synced = true;
+    await savePhotosFor(op.tagId, photos);
+    if($('fTagId').value.trim() === op.tagId){
+      formPhotos = photos;
+      renderPhotoStrip();
+    }
+  }
+
   // try to flush the outbox, then pull the fresh list from SharePoint
   async function sync(reason){
     if(!isConnected() || syncing) return;
@@ -986,6 +1042,7 @@
       try{
         if(op.op === 'save') await pushSave(op.record);
         else if(op.op === 'delete') await pushDelete(op.id);
+        else if(op.op === 'photo') await syncOnePhoto(op);
         outbox = outbox.filter(o=>o !== op); // succeeded — remove
         await saveOutbox();
       }catch(e){
@@ -1087,8 +1144,10 @@
     try{ await storage.set('assets-all', JSON.stringify(assets), true); }catch(e){}
   }
 
-  // ---------- photos (stored per-asset so one asset's photos never bloat the main list) ----------
-  // storage keys can't contain spaces, slashes or quotes, so sanitise the tag ID into a safe key
+  // ---------- photos ----------
+  // Photos are stored per-asset locally (offline cache) and, when photo sync is
+  // configured, uploaded to SharePoint as attachments on the asset row so they
+  // appear on every device. Each photo carries a label (Asset tag / Serial / Condition).
   function photoKey(tagId){
     return 'photos:' + String(tagId).replace(/[^A-Za-z0-9_-]/g, '_');
   }
@@ -1097,21 +1156,15 @@
     try{
       const res = await storage.get(photoKey(tagId), true);
       return res && res.value ? JSON.parse(res.value) : [];
-    }catch(e){
-      return [];
-    }
+    }catch(e){ return []; }
   }
   async function savePhotosFor(tagId, photos){
     if(!tagId) return;
-    try{
-      const res = await storage.set(photoKey(tagId), JSON.stringify(photos), true);
-      if(!res){ showToast('Could not save photos — check your connection.'); }
-    }catch(e){
-      showToast('Photo save failed.');
-    }
+    try{ await storage.set(photoKey(tagId), JSON.stringify(photos), true); }
+    catch(e){ showToast('Photo save failed on this device.'); }
   }
   async function deletePhotosFor(tagId){
-    try{ await storage.delete(photoKey(tagId), true); }catch(e){ /* nothing stored, fine */ }
+    try{ await storage.delete(photoKey(tagId), true); }catch(e){}
   }
 
   function compressImage(file){
@@ -1137,22 +1190,36 @@
     });
   }
 
+  function labelShort(lbl){
+    if(lbl === 'Asset tag') return 'TAG';
+    if(lbl === 'Serial') return 'SER';
+    if(lbl === 'Condition') return 'CON';
+    return (lbl||'').slice(0,3).toUpperCase();
+  }
+
   function renderPhotoStrip(){
     const strip = $('photoStrip');
     strip.innerHTML = '';
+    if(!formPhotos.length){
+      const hint = document.createElement('div');
+      hint.style.cssText = 'font-size:12px;color:var(--ink-faint);padding:8px 0;';
+      hint.textContent = 'No photos yet — use the buttons above.';
+      strip.appendChild(hint);
+      return;
+    }
     formPhotos.forEach(p=>{
       const el = document.createElement('div');
       el.className = 'photo-thumb';
-      el.innerHTML = `<img src="${p.dataUrl}" alt="Condition photo"><button type="button" class="rm" data-pid="${p.id}">×</button><div class="pdate">${(p.dateTaken||'').slice(0,10)}</div>`;
+      const syncCls = p.synced ? 'done' : 'pending';
+      const syncCh = p.synced ? '✓' : '⋯';
+      const syncTitle = p.synced ? 'Saved to SharePoint' : 'Waiting to upload';
+      el.innerHTML = `<img src="${p.dataUrl}" alt="${esc(p.label||'Photo')}">` +
+        `<div class="plabel">${esc(labelShort(p.label))}</div>` +
+        (hasPhotoSync() ? `<div class="psync ${syncCls}" title="${syncTitle}">${syncCh}</div>` : '') +
+        `<button type="button" class="rm" data-pid="${p.id}">×</button>` +
+        `<div class="pdate">${(p.dateTaken||'').slice(0,10)}</div>`;
       strip.appendChild(el);
     });
-    const addBtn = document.createElement('button');
-    addBtn.type = 'button';
-    addBtn.className = 'photo-add-btn';
-    addBtn.id = 'btnAddPhoto';
-    addBtn.innerHTML = '+<br>Add photo';
-    strip.appendChild(addBtn);
-    addBtn.addEventListener('click', ()=> $('fPhotoInput').click());
     strip.querySelectorAll('.rm').forEach(btn=>{
       btn.addEventListener('click', ()=>{
         formPhotos = formPhotos.filter(p=>p.id !== btn.dataset.pid);
@@ -1161,19 +1228,112 @@
     });
   }
 
+  // capture handling with an optional queue of labels (for the Tag+Serial chain)
+  let captureQueue = [];
+  let currentCaptureLabel = 'Condition';
+  function startCapture(label){
+    currentCaptureLabel = label || 'Condition';
+    $('fPhotoInput').click();
+  }
+  document.querySelectorAll('.photo-cap[data-label]').forEach(btn=>{
+    btn.addEventListener('click', ()=> startCapture(btn.dataset.label));
+  });
+  $('btnCapTagSerial').addEventListener('click', ()=>{
+    captureQueue = ['Serial'];          // after the first (Asset tag) shot, prompt for Serial
+    startCapture('Asset tag');
+  });
+
   $('fPhotoInput').addEventListener('change', async (e)=>{
     const files = Array.from(e.target.files || []);
     for(const file of files){
       try{
         const dataUrl = await compressImage(file);
-        formPhotos.push({ id: 'p' + Date.now() + Math.random().toString(36).slice(2,7), dataUrl, dateTaken: new Date().toISOString() });
+        formPhotos.push({
+          id: 'p' + Date.now() + Math.random().toString(36).slice(2,7),
+          dataUrl,
+          dateTaken: new Date().toISOString(),
+          label: currentCaptureLabel,
+          synced: false
+        });
       }catch(err){
         showToast('Could not process one of the photos.');
       }
     }
     renderPhotoStrip();
     e.target.value = '';
+    // if a chained capture is queued (Tag + Serial), fire the next one
+    if(captureQueue.length){
+      const next = captureQueue.shift();
+      setTimeout(()=>{ showToast('Now capture the ' + next.toLowerCase() + '.'); startCapture(next); }, 350);
+    }
   });
+
+  // ---------- central photo sync (SharePoint attachments) ----------
+  function safeFilePart(str){ return String(str||'').replace(/[^A-Za-z0-9_-]/g, '-'); }
+
+  async function pushPhoto(tagId, photo){
+    // filename encodes label + date so we can read them back: label__date__id.jpg
+    const stamp = safeFilePart((photo.dateTaken||'').slice(0,19));
+    const filename = safeFilePart(photo.label||'Photo') + '__' + stamp + '__' + safeFilePart(photo.id) + '.jpg';
+    const base64 = (photo.dataUrl.split(',')[1]) || '';
+    const body = JSON.stringify({ tagId: tagId, filename: filename, contentBase64: base64 });
+    let res;
+    try{
+      res = await fetch(cfg.uploadPhoto, { method:'POST', body: body }); // text/plain by default → no CORS preflight
+    }catch(e){
+      logEvent('error', 'Photo upload failed for "' + tagId + '": ' + (e.message||e), 'Usually offline, or a CORS issue on the Upload Photo flow.');
+      const err = new Error(e.message||'network'); err.network = true; throw err;
+    }
+    if(!res.ok){
+      logEvent('error', 'Upload Photo flow returned HTTP ' + res.status + ' for "' + tagId + '".', 'Check the Upload Photo flow run history.');
+      throw new Error('HTTP ' + res.status);
+    }
+    logEvent('success', 'Uploaded a ' + (photo.label||'photo') + ' photo for "' + tagId + '".', '');
+  }
+
+  async function fetchRemotePhotos(tagId){
+    if(!hasPhotoSync() || !tagId) return [];
+    const url = cfg.getPhotos + '&id=' + encodeURIComponent(tagId);
+    const res = await fetch(url, { method:'POST' });
+    if(!res.ok) throw new Error('HTTP ' + res.status);
+    const data = await res.json();
+    if(!Array.isArray(data)) return [];
+    return data.map(item=>{
+      const name = item.filename || item.name || '';
+      const parts = name.replace(/\.jpg$/i,'').split('__');
+      const label = parts[0] ? parts[0].replace(/-/g,' ') : 'Photo';
+      const date = parts[1] ? parts[1].replace(/-/g, (m,i)=> i===13||i===16?':':'-') : '';
+      const content = item.content || item.contentBase64 || '';
+      return {
+        id: 'r_' + name,
+        remoteName: name,
+        dataUrl: 'data:image/jpeg;base64,' + content,
+        dateTaken: item.dateTaken || (parts[1]||'').replace(/-/g,':').slice(0,10),
+        label: label,
+        synced: true
+      };
+    });
+  }
+
+  // merge remote photos into local cache for an asset (dedupe by remoteName)
+  async function mergeRemotePhotos(tagId){
+    if(!hasPhotoSync()) return;
+    try{
+      const remote = await fetchRemotePhotos(tagId);
+      if(!remote.length) return;
+      let local = await loadPhotosFor(tagId);
+      const haveNames = new Set(local.map(p=>p.remoteName).filter(Boolean));
+      remote.forEach(r=>{ if(!haveNames.has(r.remoteName)) local.push(r); });
+      await savePhotosFor(tagId, local);
+      // if this asset is currently open in the form, refresh the strip
+      if($('fTagId').value.trim() === tagId){
+        formPhotos = local;
+        renderPhotoStrip();
+      }
+    }catch(e){
+      logEvent('error', 'Could not fetch photos for "' + tagId + '": ' + (e.message||e), '');
+    }
+  }
 
   // ---------- warranty / lease countdown ----------
   function daysUntil(dateStr){
@@ -1372,6 +1532,7 @@
     loadPhotosFor(a.id).then(photos=>{
       formPhotos = photos;
       renderPhotoStrip();
+      mergeRemotePhotos(a.id); // pull any photos taken on other devices
     });
   }
 
@@ -1417,6 +1578,7 @@
     if(isConnected()){
       await queueSave(record);          // updates assets + outbox + cache
       await savePhotosFor(id, formPhotos);
+      if(hasPhotoSync()) await queuePhotoUploads(id, formPhotos);
       clearFormFields(true);
       hideFormBanner();
       renderAll();
@@ -1716,13 +1878,15 @@
   // Accepts JSON ({"get":"…","save":"…","delete":"…"}) or a simple labelled text
   // file with one URL per line (e.g. "get https://…"). Lenient about formatting.
   function parseFlowUrls(text){
-    const out = { get:'', save:'', del:'' };
+    const out = { get:'', save:'', del:'', uploadPhoto:'', getPhotos:'' };
     try{
       const j = JSON.parse(text);
       if(j && typeof j === 'object'){
         out.get  = j.get  || j.Get  || '';
         out.save = j.save || j.Save || '';
         out.del  = j.delete || j.del || j.Delete || '';
+        out.uploadPhoto = j.uploadPhoto || j.uploadphoto || j.UploadPhoto || '';
+        out.getPhotos   = j.getPhotos   || j.getphotos   || j.GetPhotos   || '';
         if(out.get || out.save || out.del) return out;
       }
     }catch(e){ /* not JSON — fall through to line parsing */ }
@@ -1731,7 +1895,9 @@
       if(!m) return;
       const url = m[0];
       const label = line.slice(0, m.index).toLowerCase();
-      if(/delete|del\b/.test(label)) out.del = url;
+      if(/uploadphoto|upload.photo|photoupload/.test(label)) out.uploadPhoto = url;
+      else if(/getphotos|get.photos|photos/.test(label)) out.getPhotos = url;
+      else if(/delete|del\b/.test(label)) out.del = url;
       else if(/save/.test(label)) out.save = url;
       else if(/get/.test(label)) out.get = url;
       else if(!out.get) out.get = url;      // unlabelled lines fill get, save, del in order
@@ -1757,6 +1923,8 @@
     if(p.get) $('cfgGet').value = p.get;
     if(p.save) $('cfgSave').value = p.save;
     if(p.del) $('cfgDelete').value = p.del;
+    if(p.uploadPhoto) $('cfgUploadPhoto').value = p.uploadPhoto;
+    if(p.getPhotos) $('cfgGetPhotos').value = p.getPhotos;
     const missing = [];
     if(!p.get) missing.push('Get'); if(!p.save) missing.push('Save'); if(!p.del) missing.push('Delete');
     if(missing.length){
@@ -1775,8 +1943,9 @@
 
   $('btnExportUrls').addEventListener('click', ()=>{
     const g = $('cfgGet').value.trim(), s = $('cfgSave').value.trim(), d = $('cfgDelete').value.trim();
+    const up = $('cfgUploadPhoto').value.trim(), gp = $('cfgGetPhotos').value.trim();
     if(!g && !s && !d){ showToast('No URLs to export yet.'); return; }
-    const text = 'get ' + g + '\nsave ' + s + '\ndelete ' + d + '\n';
+    const text = 'get ' + g + '\nsave ' + s + '\ndelete ' + d + '\nuploadphoto ' + up + '\ngetphotos ' + gp + '\n';
     const blob = new Blob([text], { type:'text/plain' });
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
