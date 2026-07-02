@@ -410,6 +410,7 @@
       <div id="reader"></div>
       <div class="scan-controls">
         <button class="btn btn-primary" id="btnStartScan">Start camera</button>
+        <button class="btn" id="btnScanChain">Scan tag → serial</button>
         <button class="btn" id="btnStopScan" style="display:none;">Stop camera</button>
       </div>
       <div class="scan-status" id="scanStatus"></div>
@@ -1381,52 +1382,95 @@
 
   // ---------- scanner ----------
   let scanTarget = 'tag'; // 'tag' | 'serial'
+  let scanChain = false;  // when true, after a tag scan we auto-advance to serial
+  let scanStarting = false;
+
   $('btnStartScan').addEventListener('click', ()=> startScanner());
   $('btnStopScan').addEventListener('click', stopScanner);
+  if($('btnScanChain')){
+    $('btnScanChain').addEventListener('click', ()=>{
+      scanChain = true;
+      setScanTargetUI('tag');
+      startScanner();
+      setScanStatus('Scan the asset tag first…', '');
+    });
+  }
+
+  function setScanTargetUI(target){
+    scanTarget = target;
+    document.querySelectorAll('.scan-target-btn').forEach(b=>b.classList.toggle('active', b.dataset.target===target));
+  }
 
   // toggle: what does a scan fill?
   document.querySelectorAll('.scan-target-btn').forEach(btn=>{
     btn.addEventListener('click', ()=>{
-      document.querySelectorAll('.scan-target-btn').forEach(b=>b.classList.remove('active'));
-      btn.classList.add('active');
-      scanTarget = btn.dataset.target;
+      scanChain = false; // manual choice cancels an auto chain
+      setScanTargetUI(btn.dataset.target);
     });
   });
 
   // inline "scan" link next to the Serial number field
   $('btnScanSerial').addEventListener('click', ()=>{
-    scanTarget = 'serial';
-    document.querySelectorAll('.scan-target-btn').forEach(b=>b.classList.toggle('active', b.dataset.target==='serial'));
+    scanChain = false;
+    setScanTargetUI('serial');
     document.querySelector('nav.tabs button[data-tab="scan"]').click();
     window.scrollTo({ top:0, behavior:'smooth' });
     startScanner();
     setScanStatus('Scanning into Serial number…', '');
   });
 
-  function startScanner(){
+  async function startScanner(){
+    if(scanStarting || html5QrCode) return; // avoid double-starts that jam the camera
+    scanStarting = true;
     const reader = $('reader');
     reader.style.display='block';
     $('btnStartScan').style.display='none';
     $('btnStopScan').style.display='inline-flex';
     setScanStatus(scanTarget==='serial' ? 'Starting camera (serial number)…' : 'Starting camera…', '');
 
+    const config = { fps: 10, qrbox: { width: 240, height: 140 } };
     html5QrCode = new Html5Qrcode("reader");
-    html5QrCode.start(
-      { facingMode: "environment" },
-      { fps: 10, qrbox: { width: 240, height: 140 } },
-      onScanSuccess
-    ).catch(err=>{
-      setScanStatus('Could not access camera: ' + (err && err.message ? err.message : err), 'err');
-      resetScanButtons();
-    });
+
+    // Try the rear camera first; if that fails, list cameras and pick a back one.
+    try{
+      await html5QrCode.start({ facingMode: { exact: "environment" } }, config, onScanSuccess, ()=>{});
+      scanStarting = false;
+      setScanStatus('Camera ready — point at the barcode.', '');
+      return;
+    }catch(e1){
+      try{
+        await html5QrCode.start({ facingMode: "environment" }, config, onScanSuccess, ()=>{});
+        scanStarting = false;
+        setScanStatus('Camera ready — point at the barcode.', '');
+        return;
+      }catch(e2){
+        try{
+          const cams = await Html5Qrcode.getCameras();
+          if(cams && cams.length){
+            const back = cams.find(c=>/back|rear|environment/i.test(c.label||'')) || cams[cams.length-1];
+            await html5QrCode.start(back.id, config, onScanSuccess, ()=>{});
+            scanStarting = false;
+            setScanStatus('Camera ready — point at the barcode.', '');
+            return;
+          }
+          throw e2;
+        }catch(e3){
+          scanStarting = false;
+          try{ html5QrCode.clear(); }catch(_){}
+          html5QrCode = null;
+          const msg = (e3 && e3.message) ? e3.message : String(e3);
+          setScanStatus('Could not start the camera: ' + msg + '. Check that the browser has camera permission and no other app is using the camera, then try again.', 'err');
+          resetScanButtons();
+        }
+      }
+    }
   }
 
   function stopScanner(){
-    if(html5QrCode){
-      html5QrCode.stop().then(()=>{
-        html5QrCode.clear();
-        html5QrCode = null;
-      }).catch(()=>{ html5QrCode = null; });
+    const inst = html5QrCode;
+    html5QrCode = null;
+    if(inst){
+      inst.stop().then(()=>{ try{ inst.clear(); }catch(_){} }).catch(()=>{});
     }
     $('reader').style.display='none';
     resetScanButtons();
@@ -1439,14 +1483,23 @@
 
   function onScanSuccess(decodedText){
     setScanStatus('Scanned: ' + decodedText, 'ok');
-    stopScanner();
     if(scanTarget === 'serial'){
+      stopScanner();
       $('fSerial').value = decodedText;
       showFormBanner('Serial number scanned. Add the rest of the details and save.');
       $('fSerial').focus();
       showToast('Serial number captured.');
+      scanChain = false;
     }else{
+      // asset tag scanned
+      stopScanner();
       handleIncomingCode(decodedText);
+      if(scanChain){
+        // auto-advance to the serial scan without the user changing anything
+        setScanTargetUI('serial');
+        showToast('Tag captured — now scan the serial.');
+        setTimeout(()=>{ startScanner(); setScanStatus('Now scan the serial number…', ''); }, 500);
+      }
     }
   }
 
