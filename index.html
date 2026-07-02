@@ -153,6 +153,23 @@
   }
   .cat-item .cat-rm:hover{background:var(--danger-tint);}
   .cat-empty{color:var(--ink-faint); font-size:13px; text-align:center; padding:14px;}
+  .view-modal{max-width:520px; width:100%;}
+  .view-head{display:flex; align-items:flex-start; justify-content:space-between; gap:12px; margin-bottom:12px;}
+  .view-tag{font-size:20px; font-weight:700; letter-spacing:0.01em; color:var(--ink);}
+  .view-name{font-size:13.5px; color:var(--ink-soft); margin-top:2px;}
+  .view-photos{display:flex; gap:8px; flex-wrap:wrap; margin-bottom:14px;}
+  .view-photos img{width:96px; height:96px; object-fit:cover; border-radius:8px; border:1px solid var(--border); cursor:pointer;}
+  .view-photos .vp-wrap{position:relative;}
+  .view-photos .vp-label{position:absolute; top:3px; left:3px; background:rgba(30,34,38,0.72); color:#fff; font-size:8.5px; padding:1px 5px; border-radius:4px; font-family:'IBM Plex Mono';}
+  .view-photos .vp-empty{color:var(--ink-faint); font-size:12.5px; padding:6px 0;}
+  .view-grid{display:grid; grid-template-columns:1fr 1fr; gap:10px 16px;}
+  .view-grid .vg-item{font-size:13px;}
+  .view-grid .vg-item.full{grid-column:1 / -1;}
+  .view-grid .vg-label{font-size:10.5px; text-transform:uppercase; letter-spacing:0.06em; color:var(--ink-faint); font-family:'IBM Plex Mono';}
+  .view-grid .vg-val{color:var(--ink); margin-top:1px; word-break:break-word;}
+  .view-lightbox{position:fixed; inset:0; background:rgba(0,0,0,0.85); display:none; align-items:center; justify-content:center; z-index:80; padding:20px;}
+  .view-lightbox.show{display:flex;}
+  .view-lightbox img{max-width:100%; max-height:100%; border-radius:8px;}
 
   .divider-label{
     display:flex;align-items:center;gap:10px;margin:18px 0 14px;
@@ -246,8 +263,8 @@
     background:var(--bg); border:1px solid var(--border);
   }
   .tag-card .tag-top{padding:14px 14px 10px;}
-  .tag-card .tag-id{font-family:'IBM Plex Mono'; font-size:12px; color:var(--ink-faint); letter-spacing:0.03em;}
-  .tag-card .tag-name{font-size:15px; font-weight:600; margin:3px 0 0; padding-right:20px;}
+  .tag-card .tag-id{font-family:'IBM Plex Mono'; font-size:17px; font-weight:700; color:var(--ink); letter-spacing:0.02em; padding-right:20px;}
+  .tag-card .tag-name{font-size:13px; font-weight:500; color:var(--ink-soft); margin:2px 0 0; padding-right:20px;}
   .tag-card .tag-meta{font-size:12.5px; color:var(--ink-soft); margin-top:6px; line-height:1.5;}
   .status-pill{
     display:inline-flex; align-items:center; gap:5px; font-family:'IBM Plex Mono';
@@ -433,8 +450,12 @@
           <input type="text" id="fName" placeholder="e.g. Dell Latitude 5440 laptop">
         </div>
         <div class="field full">
-          <label for="fCategory">Category <span>required</span> <span class="scan-inline" id="btnManageCategories">✎ manage</span></label>
+          <label for="fCategory">Category <span>required</span> <span class="scan-inline manage-list-link" data-list="category">✎ manage</span></label>
           <select id="fCategory"></select>
+        </div>
+        <div class="field full" id="deviceTypeWrap" style="display:none;">
+          <label for="fDeviceType">Device type <span class="scan-inline manage-list-link" data-list="deviceType">✎ manage</span></label>
+          <select id="fDeviceType"></select>
         </div>
         <div class="field">
           <label for="fStatus">Status</label>
@@ -446,16 +467,16 @@
           </select>
         </div>
         <div class="field">
-          <label for="fLocation">Location / room</label>
-          <input type="text" id="fLocation" placeholder="e.g. Room 14, IT Store">
-        </div>
-        <div class="field">
-          <label for="fAssigned">Assigned to / department</label>
-          <input type="text" id="fAssigned" placeholder="e.g. Geography, J. Smith">
-        </div>
-        <div class="field">
           <label for="fSerial">Serial number <span class="scan-inline" id="btnScanSerial">⌑ scan</span></label>
           <input type="text" id="fSerial" class="mono" placeholder="e.g. 5CD1234ABC">
+        </div>
+        <div class="field">
+          <label for="fLocation">Location / room <span class="scan-inline manage-list-link" data-list="location">✎ manage</span></label>
+          <select id="fLocation"></select>
+        </div>
+        <div class="field">
+          <label for="fDepartment">Department <span class="scan-inline manage-list-link" data-list="department">✎ manage</span></label>
+          <select id="fDepartment"></select>
         </div>
         <div class="field">
           <label for="fPurchaseDate">Purchase date</label>
@@ -618,21 +639,42 @@
   </div>
 </div>
 
-<div class="modal-backdrop" id="categoryModal">
-  <div class="modal" style="max-width:420px;">
-    <h3>Manage categories</h3>
-    <p>Add or remove the options in the Category dropdown. Existing assets keep their category even if you remove it from the list.</p>
+<div class="modal-backdrop" id="listModal">
+  <div class="modal" style="max-width:440px;">
+    <h3 id="listModalTitle">Manage list</h3>
+    <p>Add or remove options in this dropdown, or import a CSV (one value per line, or the first column of a spreadsheet). Existing assets keep their value even if you remove it from the list.</p>
     <div class="cat-add-row">
-      <input type="text" id="newCategoryInput" placeholder="New category name" maxlength="60">
-      <button class="btn btn-primary" id="btnAddCategory">Add</button>
+      <input type="text" id="newListInput" placeholder="New item" maxlength="80">
+      <button class="btn btn-primary" id="btnAddListItem">Add</button>
     </div>
-    <div class="cat-list" id="categoryList"></div>
-    <div class="row" style="margin-top:16px;">
-      <button class="btn" id="btnCloseCategoryModal">Done</button>
+    <div class="cat-list" id="listItems"></div>
+    <input type="file" id="listCsvInput" accept=".csv,.txt,text/csv,text/plain" style="display:none">
+    <div class="row" style="margin-top:16px; justify-content:space-between;">
+      <button class="btn" id="btnImportListCsv">Import CSV</button>
+      <button class="btn" id="btnCloseListModal">Done</button>
     </div>
   </div>
 </div>
 
+<div class="modal-backdrop" id="viewModal">
+  <div class="modal view-modal">
+    <div class="view-head">
+      <div>
+        <div class="view-tag mono" id="viewTag"></div>
+        <div class="view-name" id="viewName"></div>
+      </div>
+      <span class="status-pill" id="viewStatus"></span>
+    </div>
+    <div class="view-photos" id="viewPhotos"></div>
+    <div class="view-grid" id="viewGrid"></div>
+    <div class="row" style="margin-top:18px;">
+      <button class="btn" id="btnViewEdit">Edit</button>
+      <button class="btn" id="btnCloseView">Close</button>
+    </div>
+  </div>
+</div>
+
+<div class="view-lightbox" id="viewLightbox"><img id="viewLightboxImg" src="" alt="Photo"></div>
 <div class="toast" id="toast"></div>
 
 <script>
@@ -782,101 +824,138 @@
     el.className = 'settings-status' + (cls ? ' '+cls : '');
   }
 
-  // ---------- categories ----------
-  const DEFAULT_CATEGORIES = ['IT Equipment','Furniture','PE Equipment','Science Equipment','Music & Drama','Library & Textbooks','Catering','Site & Facilities','Other'];
-  let categories = DEFAULT_CATEGORIES.slice();
+  // ---------- managed lookup lists (category, location, department, device type) ----------
+  const LIST_DEFS = {
+    category:   { store:'categories',  title:'Categories',  selId:'fCategory',   fallback:'IT Equipment',
+                  seed:['IT Equipment','Furniture','PE Equipment','Science Equipment','Music & Drama','Library & Textbooks','Catering','Site & Facilities','Other'] },
+    location:   { store:'locations',   title:'Locations',   selId:'fLocation',   fallback:'',
+                  seed:['IT Store','Library','Main Office','Reception','Hall','Gym'] },
+    department: { store:'departments', title:'Departments', selId:'fDepartment', fallback:'',
+                  seed:['English','Maths','Science','Geography','History','MFL','PE','Art','Music','Computing','Admin','Site'] },
+    deviceType: { store:'deviceTypes', title:'Device types', selId:'fDeviceType', fallback:'',
+                  seed:['Laptop','Desktop','Tablet','Monitor','Printer','Interactive Panel','Network Switch','Access Point','Visualiser','Projector','Other'] }
+  };
+  const lists = { category:[], location:[], department:[], deviceType:[] };
 
-  async function loadCategories(){
-    try{
-      const res = await storage.get('categories', true);
-      if(res && res.value){
-        const c = JSON.parse(res.value);
-        if(Array.isArray(c) && c.length) categories = c;
-      }else{
-        await storage.set('categories', JSON.stringify(categories), true);
-      }
-    }catch(e){ /* use defaults */ }
-    populateCategorySelect();
-  }
-  async function saveCategories(){
-    try{ await storage.set('categories', JSON.stringify(categories), true); }catch(e){}
-  }
-
-  // fill the form's Category dropdown, keeping the current selection if still valid
-  function populateCategorySelect(keepValue){
-    const sel = $('fCategory');
-    const current = keepValue != null ? keepValue : sel.value;
-    sel.innerHTML = categories.map(c=>`<option value="${esc(c)}">${esc(c)}</option>`).join('');
-    if(current && categories.includes(current)){
-      sel.value = current;
-    }else if(categories.includes('IT Equipment')){
-      sel.value = 'IT Equipment';
-    }else{
-      sel.selectedIndex = 0;
+  async function loadLists(){
+    for(const k of Object.keys(LIST_DEFS)){
+      const def = LIST_DEFS[k];
+      try{
+        const res = await storage.get(def.store, true);
+        if(res && res.value){
+          const arr = JSON.parse(res.value);
+          lists[k] = Array.isArray(arr) && arr.length ? arr : def.seed.slice();
+        }else{
+          lists[k] = def.seed.slice();
+          await storage.set(def.store, JSON.stringify(lists[k]), true);
+        }
+      }catch(e){ lists[k] = def.seed.slice(); }
     }
+    Object.keys(LIST_DEFS).forEach(k=> populateSelect(k));
+  }
+  async function saveList(k){
+    try{ await storage.set(LIST_DEFS[k].store, JSON.stringify(lists[k]), true); }catch(e){}
   }
 
-  // ensure a specific category is selectable (used when editing an asset whose
-  // category was removed from the list) then select it
-  function ensureCategoryOption(cat){
-    if(cat && !categories.includes(cat)){
-      const sel = $('fCategory');
+  // Device Type only applies to IT Equipment — show/hide the field accordingly
+  function updateDeviceTypeVisibility(){
+    const wrap = $('deviceTypeWrap');
+    if(!wrap) return;
+    wrap.style.display = ($('fCategory').value.trim() === 'IT Equipment') ? 'block' : 'none';
+  }
+
+
+  function populateSelect(k, keepValue){
+    const def = LIST_DEFS[k];
+    const sel = $(def.selId);
+    if(!sel) return;
+    const current = keepValue != null ? keepValue : sel.value;
+    let opts = '';
+    if(!def.fallback) opts += '<option value="">— none —</option>';
+    opts += lists[k].map(v=>`<option value="${esc(v)}">${esc(v)}</option>`).join('');
+    sel.innerHTML = opts;
+    if(current && lists[k].includes(current)) sel.value = current;
+    else if(def.fallback && lists[k].includes(def.fallback)) sel.value = def.fallback;
+    else sel.value = def.fallback ? (lists[k][0] || '') : '';
+  }
+  function ensureOption(k, value){
+    if(value && !lists[k].includes(value)){
+      const sel = $(LIST_DEFS[k].selId);
+      if(!sel) return;
       const opt = document.createElement('option');
-      opt.value = cat; opt.textContent = cat + ' (not in list)';
+      opt.value = value; opt.textContent = value + ' (not in list)';
       sel.insertBefore(opt, sel.firstChild);
     }
   }
 
-  // ----- category manager modal -----
-  function renderCategoryList(){
-    const list = $('categoryList');
-    if(!categories.length){
-      list.innerHTML = '<div class="cat-empty">No categories yet. Add one above.</div>';
-      return;
-    }
-    list.innerHTML = '';
-    categories.forEach(cat=>{
-      const row = document.createElement('div');
-      row.className = 'cat-item';
-      const span = document.createElement('span');
-      span.textContent = cat;
-      const rm = document.createElement('button');
-      rm.className = 'cat-rm';
-      rm.textContent = '×';
-      rm.title = 'Remove';
+  // shared manager modal
+  let activeListKey = 'category';
+  function openListManager(k){
+    activeListKey = k;
+    $('listModalTitle').textContent = 'Manage ' + LIST_DEFS[k].title.toLowerCase();
+    $('newListInput').placeholder = 'New ' + LIST_DEFS[k].title.toLowerCase().replace(/s$/,'') + ' name';
+    renderListItems();
+    $('listModal').classList.add('show');
+  }
+  function renderListItems(){
+    const k = activeListKey;
+    const box = $('listItems');
+    if(!lists[k].length){ box.innerHTML = '<div class="cat-empty">Nothing here yet. Add one above or import a CSV.</div>'; return; }
+    box.innerHTML = '';
+    lists[k].forEach(v=>{
+      const row = document.createElement('div'); row.className = 'cat-item';
+      const span = document.createElement('span'); span.textContent = v;
+      const rm = document.createElement('button'); rm.className = 'cat-rm'; rm.textContent = '×'; rm.title = 'Remove';
       rm.addEventListener('click', async ()=>{
-        categories = categories.filter(c=>c !== cat);
-        await saveCategories();
-        renderCategoryList();
-        populateCategorySelect();
+        lists[k] = lists[k].filter(x=>x !== v);
+        await saveList(k); renderListItems(); populateSelect(k);
       });
-      row.appendChild(span); row.appendChild(rm);
-      list.appendChild(row);
+      row.appendChild(span); row.appendChild(rm); box.appendChild(row);
     });
   }
-  $('btnManageCategories').addEventListener('click', ()=>{
-    renderCategoryList();
-    $('categoryModal').classList.add('show');
-  });
-  $('btnCloseCategoryModal').addEventListener('click', ()=>{
-    $('categoryModal').classList.remove('show');
-  });
-  async function addCategoryFromInput(){
-    const input = $('newCategoryInput');
+  async function addToActiveList(){
+    const k = activeListKey;
+    const input = $('newListInput');
     const name = input.value.trim();
     if(!name) return;
-    if(categories.some(c=>c.toLowerCase() === name.toLowerCase())){
-      showToast('That category already exists.');
-      return;
-    }
-    categories.push(name);
-    await saveCategories();
+    if(lists[k].some(v=>v.toLowerCase() === name.toLowerCase())){ showToast('That already exists.'); return; }
+    lists[k].push(name);
+    await saveList(k);
     input.value = '';
-    renderCategoryList();
-    populateCategorySelect(name); // select the newly added one
+    renderListItems();
+    populateSelect(k, name);
   }
-  $('btnAddCategory').addEventListener('click', addCategoryFromInput);
-  $('newCategoryInput').addEventListener('keydown', (e)=>{ if(e.key === 'Enter') addCategoryFromInput(); });
+  // CSV import: takes the first column of each row, ignores a header row if it looks like one
+  async function importListCsv(text){
+    const k = activeListKey;
+    const rows = text.split(/\r?\n/).map(r=>r.trim()).filter(Boolean);
+    let added = 0;
+    rows.forEach((row, idx)=>{
+      let cell = row.split(',')[0].trim().replace(/^"|"$/g,'').trim();
+      if(!cell) return;
+      if(idx===0 && /^(name|location|department|category|type|device.?type)$/i.test(cell)) return; // skip header
+      if(!lists[k].some(v=>v.toLowerCase() === cell.toLowerCase())){ lists[k].push(cell); added++; }
+    });
+    if(added){ await saveList(k); renderListItems(); populateSelect(k); showToast('Imported ' + added + ' item' + (added===1?'':'s') + '.'); }
+    else showToast('No new items found in that CSV.');
+  }
+
+  // wire the manage links (each has data-list) and modal buttons
+  document.querySelectorAll('.manage-list-link').forEach(link=>{
+    link.addEventListener('click', ()=> openListManager(link.dataset.list));
+  });
+  $('btnAddListItem').addEventListener('click', addToActiveList);
+  $('newListInput').addEventListener('keydown', (e)=>{ if(e.key === 'Enter') addToActiveList(); });
+  $('btnCloseListModal').addEventListener('click', ()=> $('listModal').classList.remove('show'));
+  $('btnImportListCsv').addEventListener('click', ()=> $('listCsvInput').click());
+  $('listCsvInput').addEventListener('change', async (e)=>{
+    const file = e.target.files && e.target.files[0];
+    if(!file) return;
+    try{ const text = await file.text(); await importListCsv(text); }
+    catch(_){ showToast('Could not read that CSV.'); }
+    e.target.value = '';
+  });
+  $('fCategory').addEventListener('change', updateDeviceTypeVisibility);
 
   // build the query string of asset fields for the Save flow
   function assetQuery(rec){
@@ -887,6 +966,7 @@
     p.set('status', rec.status || '');
     p.set('location', rec.location || '');
     p.set('assignedTo', rec.assignedTo || '');
+    p.set('deviceType', rec.deviceType || '');
     p.set('serialNumber', rec.serialNumber || '');
     p.set('value', rec.value == null ? '' : String(rec.value));
     p.set('warrantyProvider', rec.warrantyProvider || '');
@@ -907,6 +987,7 @@
       status: a.status || 'In Use',
       location: a.location || '',
       assignedTo: a.assignedTo || '',
+      deviceType: a.deviceType || '',
       serialNumber: a.serialNumber || '',
       value: (a.value === '' || a.value == null) ? null : parseFloat(a.value),
       warrantyProvider: a.warrantyProvider || '',
@@ -1538,10 +1619,12 @@
   function clearFormFields(clearId){
     if(clearId) $('fTagId').value = '';
     $('fName').value='';
-    populateCategorySelect('IT Equipment');
+    populateSelect('category','IT Equipment');
+    updateDeviceTypeVisibility();
+    populateSelect('deviceType','');
     $('fStatus').value='In Use';
-    $('fLocation').value='';
-    $('fAssigned').value='';
+    populateSelect('location','');
+    populateSelect('department','');
     $('fSerial').value='';
     $('fPurchaseDate').value='';
     $('fValue').value='';
@@ -1562,11 +1645,16 @@
   function loadAssetIntoForm(a){
     $('fTagId').value = a.id;
     $('fName').value = a.name || '';
-    ensureCategoryOption(a.category);
-    populateCategorySelect(a.category || 'IT Equipment');
+    ensureOption('category', a.category);
+    populateSelect('category', a.category || 'IT Equipment');
+    updateDeviceTypeVisibility();
+    ensureOption('deviceType', a.deviceType);
+    populateSelect('deviceType', a.deviceType || '');
     $('fStatus').value = a.status || 'In Use';
-    $('fLocation').value = a.location || '';
-    $('fAssigned').value = a.assignedTo || '';
+    ensureOption('location', a.location);
+    populateSelect('location', a.location || '');
+    ensureOption('department', a.assignedTo);
+    populateSelect('department', a.assignedTo || '');
     $('fSerial').value = a.serialNumber || '';
     $('fPurchaseDate').value = a.purchaseDate || '';
     $('fValue').value = a.value || '';
@@ -1612,7 +1700,8 @@
       category: $('fCategory').value.trim(),
       status: $('fStatus').value,
       location: $('fLocation').value.trim(),
-      assignedTo: $('fAssigned').value.trim(),
+      assignedTo: $('fDepartment').value.trim(),
+      deviceType: ($('fCategory').value.trim()==='IT Equipment') ? $('fDeviceType').value.trim() : '',
       serialNumber: $('fSerial').value.trim(),
       purchaseDate: $('fPurchaseDate').value,
       value: $('fValue').value ? parseFloat($('fValue').value) : null,
@@ -1694,7 +1783,7 @@
       if(catF && a.category !== catF) return false;
       if(statF && a.status !== statF) return false;
       if(q){
-        const hay = [a.id,a.name,a.location,a.assignedTo,a.category,a.serialNumber].join(' ').toLowerCase();
+        const hay = [a.id,a.name,a.location,a.assignedTo,a.category,a.deviceType,a.serialNumber].join(' ').toLowerCase();
         if(!hay.includes(q)) return false;
       }
       return true;
@@ -1724,8 +1813,8 @@
           <div class="tag-id mono">${esc(a.id)}</div>
           <div class="tag-name">${esc(a.name)}</div>
           <div class="tag-meta">
-            ${a.category ? esc(a.category)+' · ' : ''}${a.location ? esc(a.location) : 'No location set'}
-            ${a.assignedTo ? '<br>'+esc(a.assignedTo) : ''}
+            ${a.category ? esc(a.category) : ''}${a.deviceType ? ' · '+esc(a.deviceType) : ''}
+            <br>${a.location ? esc(a.location) : 'No location set'}${a.assignedTo ? ' · '+esc(a.assignedTo) : ''}
             ${a.serialNumber ? '<br>S/N: '+esc(a.serialNumber) : ''}
           </div>
           <span class="status-pill ${statusClass(a.status)}">${esc(a.status||'In Use')}</span>
@@ -1734,6 +1823,7 @@
         <div class="barcode-strip">${bars.map(w=>`<div class="bar" style="width:${w}px;height:${8+w*3}px;"></div>`).join('')}</div>
         <div class="tag-perf"></div>
         <div class="tag-bottom">
+          <button class="btn btnView" data-id="${esc(a.id)}">View</button>
           <button class="btn btnEdit" data-id="${esc(a.id)}">Edit</button>
           <button class="btn btn-danger btnDelete" data-id="${esc(a.id)}">Remove</button>
         </div>
@@ -1741,6 +1831,12 @@
       grid.appendChild(card);
     });
 
+    grid.querySelectorAll('.btnView').forEach(b=>{
+      b.addEventListener('click', ()=>{
+        const a = assets.find(x=>x.id===b.dataset.id);
+        if(a) openAssetView(a);
+      });
+    });
     grid.querySelectorAll('.btnEdit').forEach(b=>{
       b.addEventListener('click', ()=>{
         const a = assets.find(x=>x.id===b.dataset.id);
@@ -1765,6 +1861,85 @@
     pendingDeleteId = null;
     $('confirmModal').classList.remove('show');
   });
+
+  // ---------- asset detail view (read-only, with photos) ----------
+  let viewingAsset = null;
+  function vgItem(label, value, full){
+    if(value === '' || value == null) return '';
+    return `<div class="vg-item${full?' full':''}"><div class="vg-label">${esc(label)}</div><div class="vg-val">${esc(String(value))}</div></div>`;
+  }
+  function openAssetView(a){
+    viewingAsset = a;
+    $('viewTag').textContent = a.id;
+    $('viewName').textContent = a.name || '';
+    const sp = $('viewStatus');
+    sp.className = 'status-pill ' + statusClass(a.status);
+    sp.textContent = a.status || 'In Use';
+
+    let warranty = '';
+    if(a.warrantyExpiry){
+      const w = describeCountdown(a.warrantyExpiry, 'expired', 'expires');
+      warranty = a.warrantyExpiry + ' (' + w.text + ')';
+    }
+    let lease = '';
+    if(a.isLeased){
+      lease = a.leaseEndDate ? (a.leaseEndDate + ' (' + describeCountdown(a.leaseEndDate,'ended','ends').text + ')') : 'Yes';
+    }
+    const val = (a.value != null && a.value !== '') ? ('\u00A3' + Number(a.value).toFixed(2)) : '';
+
+    $('viewGrid').innerHTML = [
+      vgItem('Category', a.category),
+      vgItem('Device type', a.deviceType),
+      vgItem('Location', a.location),
+      vgItem('Department', a.assignedTo),
+      vgItem('Serial number', a.serialNumber),
+      vgItem('Purchase date', a.purchaseDate),
+      vgItem('Value', val),
+      vgItem('Warranty provider', a.warrantyProvider),
+      vgItem('Warranty', warranty, true),
+      vgItem('Lease', lease, true),
+      vgItem('Notes', a.notes, true)
+    ].join('');
+
+    // photos: local cache first, then merge remote
+    $('viewPhotos').innerHTML = '<div class="vp-empty">Loading photos…</div>';
+    loadPhotosFor(a.id).then(async (photos)=>{
+      if(hasPhotoSync()){
+        try{
+          const remote = await fetchRemotePhotos(a.id);
+          const names = new Set(photos.map(p=>p.remoteName).filter(Boolean));
+          remote.forEach(r=>{ if(!names.has(r.remoteName)) photos.push(r); });
+        }catch(e){}
+      }
+      renderViewPhotos(photos);
+    });
+
+    $('viewModal').classList.add('show');
+  }
+  function renderViewPhotos(photos){
+    const box = $('viewPhotos');
+    if(!photos || !photos.length){ box.innerHTML = '<div class="vp-empty">No photos for this asset.</div>'; return; }
+    box.innerHTML = '';
+    photos.forEach(p=>{
+      const wrap = document.createElement('div'); wrap.className = 'vp-wrap';
+      wrap.innerHTML = `<img src="${p.dataUrl}" alt="${esc(p.label||'Photo')}"><div class="vp-label">${esc(labelShort(p.label))}</div>`;
+      wrap.querySelector('img').addEventListener('click', ()=>{
+        $('viewLightboxImg').src = p.dataUrl;
+        $('viewLightbox').classList.add('show');
+      });
+      box.appendChild(wrap);
+    });
+  }
+  $('btnCloseView').addEventListener('click', ()=> $('viewModal').classList.remove('show'));
+  $('btnViewEdit').addEventListener('click', ()=>{
+    if(!viewingAsset) return;
+    const a = viewingAsset;
+    $('viewModal').classList.remove('show');
+    loadAssetIntoForm(a);
+    showFormBanner('Editing "' + a.name + '".');
+    document.querySelector('nav.tabs button[data-tab="scan"]').click();
+  });
+  $('viewLightbox').addEventListener('click', ()=> $('viewLightbox').classList.remove('show'));
   $('btnConfirmDelete').addEventListener('click', async ()=>{
     const idToDelete = pendingDeleteId;
     $('confirmModal').classList.remove('show');
@@ -2050,7 +2225,7 @@
 
   (async function init(){
     await loadConfig();
-    await loadCategories();
+    await loadLists();
     await loadAssets();
     renderPhotoStrip();
     updateCountdownHints();
