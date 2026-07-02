@@ -475,7 +475,7 @@
           <select id="fLocation"></select>
         </div>
         <div class="field">
-          <label for="fDepartment">Department <span class="scan-inline manage-list-link" data-list="department">✎ manage</span></label>
+          <label for="fDepartment">Assigned to <span style="font-weight:400;color:var(--ink-faint);">(department or staff)</span> <span class="scan-inline manage-list-link" data-list="department">✎ departments</span></label>
           <select id="fDepartment"></select>
         </div>
         <div class="field">
@@ -585,6 +585,10 @@
       <div class="url-field">
         <label for="cfgGetPhotos">Get photos URL <span style="font-weight:400;color:var(--ink-faint);">(optional — for photo sync)</span></label>
         <input type="text" id="cfgGetPhotos" placeholder="https://…/workflows/…/invoke?api-version=1&amp;sp=…&amp;sv=1.0&amp;sig=…" spellcheck="false">
+      </div>
+      <div class="url-field">
+        <label for="cfgGetStaff">Get staff URL <span style="font-weight:400;color:var(--ink-faint);">(optional — live staff list from Microsoft 365)</span></label>
+        <input type="text" id="cfgGetStaff" placeholder="https://…/workflows/…/invoke?api-version=1&amp;sp=…&amp;sv=1.0&amp;sig=…" spellcheck="false">
       </div>
 
       <div class="form-actions">
@@ -697,13 +701,14 @@
   let html5QrCode = null;
   let dataReady = false;
   let formPhotos = []; // {id, dataUrl, dateTaken} for the asset currently in the form
-  let cfg = { get:'', save:'', del:'', uploadPhoto:'', getPhotos:'' }; // flow URLs; empty = local-only mode
+  let cfg = { get:'', save:'', del:'', uploadPhoto:'', getPhotos:'', getStaff:'' }; // flow URLs; empty = local-only mode
 
   const $ = (id) => document.getElementById(id);
   const grid = $('invGrid');
 
   function isConnected(){ return !!(cfg.get && cfg.save && cfg.del); }
   function hasPhotoSync(){ return isConnected() && !!(cfg.uploadPhoto && cfg.getPhotos); }
+  function hasStaffSync(){ return !!cfg.getStaff; }
 
   // ---------- activity log ----------
   let logEntries = [];
@@ -771,7 +776,7 @@
   // GitHub Pages site is public and these URLs are keys to your SharePoint.
   // Each device enters them once in Settings; they are then saved locally on
   // that device only. (For a private host you could paste them back in here.)
-  const DEFAULT_FLOWS = { get:'', save:'', del:'', uploadPhoto:'', getPhotos:'' };
+  const DEFAULT_FLOWS = { get:'', save:'', del:'', uploadPhoto:'', getPhotos:'', getStaff:'' };
 
   async function loadConfig(){
     let stored = null;
@@ -782,13 +787,13 @@
 
     if(stored && stored.disconnected){
       cfg.get = ''; cfg.save = ''; cfg.del = '';
-      cfg.uploadPhoto = stored.uploadPhoto || ''; cfg.getPhotos = stored.getPhotos || '';
+      cfg.uploadPhoto = stored.uploadPhoto || ''; cfg.getPhotos = stored.getPhotos || ''; cfg.getStaff = stored.getStaff || '';
     }else if(stored && (stored.get || stored.save || stored.del)){
       cfg.get = stored.get || ''; cfg.save = stored.save || ''; cfg.del = stored.del || '';
-      cfg.uploadPhoto = stored.uploadPhoto || ''; cfg.getPhotos = stored.getPhotos || '';
+      cfg.uploadPhoto = stored.uploadPhoto || ''; cfg.getPhotos = stored.getPhotos || ''; cfg.getStaff = stored.getStaff || '';
     }else{
       cfg.get = DEFAULT_FLOWS.get; cfg.save = DEFAULT_FLOWS.save; cfg.del = DEFAULT_FLOWS.del;
-      cfg.uploadPhoto = DEFAULT_FLOWS.uploadPhoto; cfg.getPhotos = DEFAULT_FLOWS.getPhotos;
+      cfg.uploadPhoto = DEFAULT_FLOWS.uploadPhoto; cfg.getPhotos = DEFAULT_FLOWS.getPhotos; cfg.getStaff = DEFAULT_FLOWS.getStaff;
       try{ await storage.set('flow-config', JSON.stringify(cfg), true); }catch(e){}
     }
 
@@ -797,6 +802,7 @@
     $('cfgDelete').value = cfg.del;
     $('cfgUploadPhoto').value = cfg.uploadPhoto;
     $('cfgGetPhotos').value = cfg.getPhotos;
+    $('cfgGetStaff').value = cfg.getStaff;
     setConnBadge(isConnected() ? 'online' : 'local');
   }
 
@@ -806,9 +812,10 @@
     cfg.del = $('cfgDelete').value.trim();
     cfg.uploadPhoto = $('cfgUploadPhoto').value.trim();
     cfg.getPhotos = $('cfgGetPhotos').value.trim();
+    cfg.getStaff = $('cfgGetStaff').value.trim();
     const payload = isConnected()
-      ? { get:cfg.get, save:cfg.save, del:cfg.del, uploadPhoto:cfg.uploadPhoto, getPhotos:cfg.getPhotos }
-      : { get:'', save:'', del:'', uploadPhoto:cfg.uploadPhoto, getPhotos:cfg.getPhotos, disconnected:true };
+      ? { get:cfg.get, save:cfg.save, del:cfg.del, uploadPhoto:cfg.uploadPhoto, getPhotos:cfg.getPhotos, getStaff:cfg.getStaff }
+      : { get:'', save:'', del:'', uploadPhoto:cfg.uploadPhoto, getPhotos:cfg.getPhotos, getStaff:cfg.getStaff, disconnected:true };
     try{
       await storage.set('flow-config', JSON.stringify(payload), true);
     }catch(e){
@@ -836,6 +843,7 @@
                   seed:['Laptop','Desktop','Tablet','Monitor','Printer','Interactive Panel','Network Switch','Access Point','Visualiser','Projector','Other'] }
   };
   const lists = { category:[], location:[], department:[], deviceType:[] };
+  let staffList = []; // pulled live from Microsoft 365 when a Get Staff URL is set
 
   async function loadLists(){
     for(const k of Object.keys(LIST_DEFS)){
@@ -864,8 +872,64 @@
     wrap.style.display = ($('fCategory').value.trim() === 'IT Equipment') ? 'block' : 'none';
   }
 
+  // The "Assigned to" dropdown combines Departments (baked-in list) and Staff
+  // (pulled live from Microsoft 365) as two groups in one select.
+  function populateAssignedSelect(keepValue){
+    const sel = $('fDepartment');
+    if(!sel) return;
+    const current = keepValue != null ? keepValue : sel.value;
+    let html = '<option value="">— none —</option>';
+    if(lists.department.length){
+      html += '<optgroup label="Departments">' +
+        lists.department.map(v=>`<option value="${esc(v)}">${esc(v)}</option>`).join('') + '</optgroup>';
+    }
+    if(staffList.length){
+      html += '<optgroup label="Staff">' +
+        staffList.map(v=>`<option value="${esc(v)}">${esc(v)}</option>`).join('') + '</optgroup>';
+    }
+    sel.innerHTML = html;
+    if(current){
+      const known = lists.department.includes(current) || staffList.includes(current);
+      if(!known){
+        const o = document.createElement('option');
+        o.value = current; o.textContent = current + ' (not in list)';
+        sel.insertBefore(o, sel.children[1] || null);
+      }
+      sel.value = current;
+    }else{
+      sel.value = '';
+    }
+  }
+
+  // load staff names from the Get Staff flow (Microsoft 365), cached locally
+  async function loadStaff(){
+    try{
+      const res = await storage.get('staff-cache', true);
+      if(res && res.value){ const a = JSON.parse(res.value); if(Array.isArray(a)) staffList = a; }
+    }catch(e){}
+    populateAssignedSelect();
+    if(!hasStaffSync()) return;
+    try{
+      const r = await fetch(cfg.getStaff, { method:'POST' });
+      if(!r.ok) throw new Error('HTTP ' + r.status);
+      const data = await r.json();
+      if(Array.isArray(data)){
+        staffList = data
+          .map(x => typeof x === 'string' ? x : (x.displayName || x.name || x.DisplayName || ''))
+          .filter(Boolean);
+        staffList = Array.from(new Set(staffList)).sort((a,b)=>a.localeCompare(b));
+        await storage.set('staff-cache', JSON.stringify(staffList), true);
+        populateAssignedSelect($('fDepartment').value);
+        logEvent('success', 'Loaded ' + staffList.length + ' staff from Microsoft 365.', '');
+      }
+    }catch(e){
+      logEvent('error', 'Could not load staff list: ' + (e.message||e), 'Check the Get Staff flow / URL.');
+    }
+  }
+
 
   function populateSelect(k, keepValue){
+    if(k === 'department'){ populateAssignedSelect(keepValue); return; }
     const def = LIST_DEFS[k];
     const sel = $(def.selId);
     if(!sel) return;
@@ -1891,7 +1955,7 @@
       vgItem('Category', a.category),
       vgItem('Device type', a.deviceType),
       vgItem('Location', a.location),
-      vgItem('Department', a.assignedTo),
+      vgItem('Assigned to', a.assignedTo),
       vgItem('Serial number', a.serialNumber),
       vgItem('Purchase date', a.purchaseDate),
       vgItem('Value', val),
@@ -2055,6 +2119,7 @@
     }else{
       setSettingsStatus('Connected. Your changes now sync to SharePoint.', 'ok');
     }
+    loadStaff();
   });
 
   $('btnTestConfig').addEventListener('click', async ()=>{
@@ -2106,7 +2171,7 @@
   // Accepts JSON ({"get":"…","save":"…","delete":"…"}) or a simple labelled text
   // file with one URL per line (e.g. "get https://…"). Lenient about formatting.
   function parseFlowUrls(text){
-    const out = { get:'', save:'', del:'', uploadPhoto:'', getPhotos:'' };
+    const out = { get:'', save:'', del:'', uploadPhoto:'', getPhotos:'', getStaff:'' };
     try{
       const j = JSON.parse(text);
       if(j && typeof j === 'object'){
@@ -2115,6 +2180,7 @@
         out.del  = j.delete || j.del || j.Delete || '';
         out.uploadPhoto = j.uploadPhoto || j.uploadphoto || j.UploadPhoto || '';
         out.getPhotos   = j.getPhotos   || j.getphotos   || j.GetPhotos   || '';
+        out.getStaff    = j.getStaff    || j.getstaff    || j.GetStaff    || '';
         if(out.get || out.save || out.del) return out;
       }
     }catch(e){ /* not JSON — fall through to line parsing */ }
@@ -2123,7 +2189,8 @@
       if(!m) return;
       const url = m[0];
       const label = line.slice(0, m.index).toLowerCase();
-      if(/uploadphoto|upload.photo|photoupload/.test(label)) out.uploadPhoto = url;
+      if(/getstaff|get.staff|staff/.test(label)) out.getStaff = url;
+      else if(/uploadphoto|upload.photo|photoupload/.test(label)) out.uploadPhoto = url;
       else if(/getphotos|get.photos|photos/.test(label)) out.getPhotos = url;
       else if(/delete|del\b/.test(label)) out.del = url;
       else if(/save/.test(label)) out.save = url;
@@ -2153,6 +2220,7 @@
     if(p.del) $('cfgDelete').value = p.del;
     if(p.uploadPhoto) $('cfgUploadPhoto').value = p.uploadPhoto;
     if(p.getPhotos) $('cfgGetPhotos').value = p.getPhotos;
+    if(p.getStaff) $('cfgGetStaff').value = p.getStaff;
     const missing = [];
     if(!p.get) missing.push('Get'); if(!p.save) missing.push('Save'); if(!p.del) missing.push('Delete');
     if(missing.length){
@@ -2171,9 +2239,9 @@
 
   $('btnExportUrls').addEventListener('click', ()=>{
     const g = $('cfgGet').value.trim(), s = $('cfgSave').value.trim(), d = $('cfgDelete').value.trim();
-    const up = $('cfgUploadPhoto').value.trim(), gp = $('cfgGetPhotos').value.trim();
+    const up = $('cfgUploadPhoto').value.trim(), gp = $('cfgGetPhotos').value.trim(), gs = $('cfgGetStaff').value.trim();
     if(!g && !s && !d){ showToast('No URLs to export yet.'); return; }
-    const text = 'get ' + g + '\nsave ' + s + '\ndelete ' + d + '\nuploadphoto ' + up + '\ngetphotos ' + gp + '\n';
+    const text = 'get ' + g + '\nsave ' + s + '\ndelete ' + d + '\nuploadphoto ' + up + '\ngetphotos ' + gp + '\ngetstaff ' + gs + '\n';
     const blob = new Blob([text], { type:'text/plain' });
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
@@ -2226,6 +2294,7 @@
   (async function init(){
     await loadConfig();
     await loadLists();
+    await loadStaff();
     await loadAssets();
     renderPhotoStrip();
     updateCountdownHints();
