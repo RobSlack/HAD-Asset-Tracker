@@ -1,7 +1,7 @@
 // Tagbook service worker — makes the app installable and available offline.
 // HTML is network-first (so updates appear when online); other assets cache-first.
 // Bump CACHE when you ship a new version to retire old caches.
-const CACHE = 'tagbook-v5';
+const CACHE = 'tagbook-v6';
 const SHELL = [
   './',
   './index.html',

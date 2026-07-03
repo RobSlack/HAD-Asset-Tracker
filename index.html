@@ -590,6 +590,10 @@
         <label for="cfgGetStaff">Get staff URL <span style="font-weight:400;color:var(--ink-faint);">(optional — live staff list from Microsoft 365)</span></label>
         <input type="text" id="cfgGetStaff" placeholder="https://…/workflows/…/invoke?api-version=1&amp;sp=…&amp;sv=1.0&amp;sig=…" spellcheck="false">
       </div>
+      <div class="url-field">
+        <label for="cfgDeletePhoto">Delete photo URL <span style="font-weight:400;color:var(--ink-faint);">(optional — removes photos from SharePoint too)</span></label>
+        <input type="text" id="cfgDeletePhoto" placeholder="https://…/workflows/…/invoke?api-version=1&amp;sp=…&amp;sv=1.0&amp;sig=…" spellcheck="false">
+      </div>
 
       <div class="form-actions">
         <button class="btn btn-primary" id="btnSaveConfig">Save &amp; connect</button>
@@ -701,7 +705,7 @@
   let html5QrCode = null;
   let dataReady = false;
   let formPhotos = []; // {id, dataUrl, dateTaken} for the asset currently in the form
-  let cfg = { get:'', save:'', del:'', uploadPhoto:'', getPhotos:'', getStaff:'' }; // flow URLs; empty = local-only mode
+  let cfg = { get:'', save:'', del:'', uploadPhoto:'', getPhotos:'', getStaff:'', deletePhoto:'' }; // flow URLs; empty = local-only mode
 
   const $ = (id) => document.getElementById(id);
   const grid = $('invGrid');
@@ -787,13 +791,13 @@
 
     if(stored && stored.disconnected){
       cfg.get = ''; cfg.save = ''; cfg.del = '';
-      cfg.uploadPhoto = stored.uploadPhoto || ''; cfg.getPhotos = stored.getPhotos || ''; cfg.getStaff = stored.getStaff || '';
+      cfg.uploadPhoto = stored.uploadPhoto || ''; cfg.getPhotos = stored.getPhotos || ''; cfg.getStaff = stored.getStaff || ''; cfg.deletePhoto = stored.deletePhoto || '';
     }else if(stored && (stored.get || stored.save || stored.del)){
       cfg.get = stored.get || ''; cfg.save = stored.save || ''; cfg.del = stored.del || '';
-      cfg.uploadPhoto = stored.uploadPhoto || ''; cfg.getPhotos = stored.getPhotos || ''; cfg.getStaff = stored.getStaff || '';
+      cfg.uploadPhoto = stored.uploadPhoto || ''; cfg.getPhotos = stored.getPhotos || ''; cfg.getStaff = stored.getStaff || ''; cfg.deletePhoto = stored.deletePhoto || '';
     }else{
       cfg.get = DEFAULT_FLOWS.get; cfg.save = DEFAULT_FLOWS.save; cfg.del = DEFAULT_FLOWS.del;
-      cfg.uploadPhoto = DEFAULT_FLOWS.uploadPhoto; cfg.getPhotos = DEFAULT_FLOWS.getPhotos; cfg.getStaff = DEFAULT_FLOWS.getStaff;
+      cfg.uploadPhoto = DEFAULT_FLOWS.uploadPhoto; cfg.getPhotos = DEFAULT_FLOWS.getPhotos; cfg.getStaff = DEFAULT_FLOWS.getStaff; cfg.deletePhoto = DEFAULT_FLOWS.deletePhoto;
       try{ await storage.set('flow-config', JSON.stringify(cfg), true); }catch(e){}
     }
 
@@ -803,6 +807,7 @@
     $('cfgUploadPhoto').value = cfg.uploadPhoto;
     $('cfgGetPhotos').value = cfg.getPhotos;
     $('cfgGetStaff').value = cfg.getStaff;
+    $('cfgDeletePhoto').value = cfg.deletePhoto;
     setConnBadge(isConnected() ? 'online' : 'local');
   }
 
@@ -813,9 +818,10 @@
     cfg.uploadPhoto = $('cfgUploadPhoto').value.trim();
     cfg.getPhotos = $('cfgGetPhotos').value.trim();
     cfg.getStaff = $('cfgGetStaff').value.trim();
+    cfg.deletePhoto = $('cfgDeletePhoto').value.trim();
     const payload = isConnected()
-      ? { get:cfg.get, save:cfg.save, del:cfg.del, uploadPhoto:cfg.uploadPhoto, getPhotos:cfg.getPhotos, getStaff:cfg.getStaff }
-      : { get:'', save:'', del:'', uploadPhoto:cfg.uploadPhoto, getPhotos:cfg.getPhotos, getStaff:cfg.getStaff, disconnected:true };
+      ? { get:cfg.get, save:cfg.save, del:cfg.del, uploadPhoto:cfg.uploadPhoto, getPhotos:cfg.getPhotos, getStaff:cfg.getStaff, deletePhoto:cfg.deletePhoto }
+      : { get:'', save:'', del:'', uploadPhoto:cfg.uploadPhoto, getPhotos:cfg.getPhotos, getStaff:cfg.getStaff, deletePhoto:cfg.deletePhoto, disconnected:true };
     try{
       await storage.set('flow-config', JSON.stringify(payload), true);
     }catch(e){
@@ -1161,8 +1167,9 @@
     const photos = await loadPhotosFor(op.tagId);
     const photo = photos.find(p=>p.id === op.photoId);
     if(!photo){ return; } // photo was removed before it uploaded — nothing to do
-    await pushPhoto(op.tagId, photo);       // throws (with .network flag) on failure
+    const filename = await pushPhoto(op.tagId, photo); // throws (with .network flag) on failure
     photo.synced = true;
+    photo.remoteName = filename;
     await savePhotosFor(op.tagId, photos);
     if($('fTagId').value.trim() === op.tagId){
       formPhotos = photos;
@@ -1189,6 +1196,7 @@
         if(op.op === 'save') await pushSave(op.record);
         else if(op.op === 'delete') await pushDelete(op.id);
         else if(op.op === 'photo') await syncOnePhoto(op);
+        else if(op.op === 'photodelete') await pushPhotoDelete(op.tagId, op.filename);
         outbox = outbox.filter(o=>o !== op); // succeeded — remove
         await saveOutbox();
       }catch(e){
@@ -1367,9 +1375,20 @@
       strip.appendChild(el);
     });
     strip.querySelectorAll('.rm').forEach(btn=>{
-      btn.addEventListener('click', ()=>{
+      btn.addEventListener('click', async ()=>{
+        const tagId = $('fTagId').value.trim();
+        const photo = formPhotos.find(p=>p.id === btn.dataset.pid);
         formPhotos = formPhotos.filter(p=>p.id !== btn.dataset.pid);
         renderPhotoStrip();
+        if(photo){
+          await savePhotosFor(tagId, formPhotos); // keep the local cache in step immediately
+          const remoteFilename = photo.remoteName || (photo.synced ? photoFilename(photo) : null);
+          if(remoteFilename && cfg.deletePhoto && tagId){
+            outbox.push({ op:'photodelete', tagId:tagId, filename:remoteFilename, ts:Date.now() });
+            await saveOutbox();
+            sync('after photo delete');
+          }
+        }
       });
     });
   }
@@ -1417,10 +1436,14 @@
   // ---------- central photo sync (SharePoint attachments) ----------
   function safeFilePart(str){ return String(str||'').replace(/[^A-Za-z0-9_-]/g, '-'); }
 
-  async function pushPhoto(tagId, photo){
-    // filename encodes label + date so we can read them back: label__date__id.jpg
+  function photoFilename(photo){
+    // deterministic filename from the photo's own fields: label__date__id.jpg
     const stamp = safeFilePart((photo.dateTaken||'').slice(0,19));
-    const filename = safeFilePart(photo.label||'Photo') + '__' + stamp + '__' + safeFilePart(photo.id) + '.jpg';
+    return safeFilePart(photo.label||'Photo') + '__' + stamp + '__' + safeFilePart(photo.id) + '.jpg';
+  }
+
+  async function pushPhoto(tagId, photo){
+    const filename = photoFilename(photo);
     const base64 = (photo.dataUrl.split(',')[1]) || '';
     const body = JSON.stringify({ tagId: tagId, filename: filename, contentBase64: base64 });
     let res;
@@ -1435,6 +1458,23 @@
       throw new Error('HTTP ' + res.status);
     }
     logEvent('success', 'Uploaded a ' + (photo.label||'photo') + ' photo for "' + tagId + '".', '');
+    return filename;
+  }
+
+  async function pushPhotoDelete(tagId, filename){
+    const url = cfg.deletePhoto + '&id=' + encodeURIComponent(tagId) + '&filename=' + encodeURIComponent(filename);
+    let res;
+    try{
+      res = await fetch(url, { method:'POST' });
+    }catch(e){
+      logEvent('error', 'Photo delete request failed for "' + tagId + '": ' + (e.message||e), 'Usually offline or a CORS issue on the Delete Photo flow.');
+      const err = new Error(e.message||'network'); err.network = true; throw err;
+    }
+    if(!res.ok){
+      logEvent('error', 'Delete Photo flow returned HTTP ' + res.status + ' for "' + tagId + '".', '');
+      throw new Error('HTTP ' + res.status);
+    }
+    logEvent('success', 'Removed a photo from SharePoint for "' + tagId + '".', '');
   }
 
   async function fetchRemotePhotos(tagId){
@@ -2171,7 +2211,7 @@
   // Accepts JSON ({"get":"…","save":"…","delete":"…"}) or a simple labelled text
   // file with one URL per line (e.g. "get https://…"). Lenient about formatting.
   function parseFlowUrls(text){
-    const out = { get:'', save:'', del:'', uploadPhoto:'', getPhotos:'', getStaff:'' };
+    const out = { get:'', save:'', del:'', uploadPhoto:'', getPhotos:'', getStaff:'', deletePhoto:'' };
     try{
       const j = JSON.parse(text);
       if(j && typeof j === 'object'){
@@ -2181,6 +2221,7 @@
         out.uploadPhoto = j.uploadPhoto || j.uploadphoto || j.UploadPhoto || '';
         out.getPhotos   = j.getPhotos   || j.getphotos   || j.GetPhotos   || '';
         out.getStaff    = j.getStaff    || j.getstaff    || j.GetStaff    || '';
+        out.deletePhoto = j.deletePhoto || j.deletephoto || j.DeletePhoto || '';
         if(out.get || out.save || out.del) return out;
       }
     }catch(e){ /* not JSON — fall through to line parsing */ }
@@ -2189,7 +2230,8 @@
       if(!m) return;
       const url = m[0];
       const label = line.slice(0, m.index).toLowerCase();
-      if(/getstaff|get.staff|staff/.test(label)) out.getStaff = url;
+      if(/deletephoto|delete.photo|photodelete/.test(label)) out.deletePhoto = url;
+      else if(/getstaff|get.staff|staff/.test(label)) out.getStaff = url;
       else if(/uploadphoto|upload.photo|photoupload/.test(label)) out.uploadPhoto = url;
       else if(/getphotos|get.photos|photos/.test(label)) out.getPhotos = url;
       else if(/delete|del\b/.test(label)) out.del = url;
@@ -2221,6 +2263,7 @@
     if(p.uploadPhoto) $('cfgUploadPhoto').value = p.uploadPhoto;
     if(p.getPhotos) $('cfgGetPhotos').value = p.getPhotos;
     if(p.getStaff) $('cfgGetStaff').value = p.getStaff;
+    if(p.deletePhoto) $('cfgDeletePhoto').value = p.deletePhoto;
     const missing = [];
     if(!p.get) missing.push('Get'); if(!p.save) missing.push('Save'); if(!p.del) missing.push('Delete');
     if(missing.length){
@@ -2239,9 +2282,9 @@
 
   $('btnExportUrls').addEventListener('click', ()=>{
     const g = $('cfgGet').value.trim(), s = $('cfgSave').value.trim(), d = $('cfgDelete').value.trim();
-    const up = $('cfgUploadPhoto').value.trim(), gp = $('cfgGetPhotos').value.trim(), gs = $('cfgGetStaff').value.trim();
+    const up = $('cfgUploadPhoto').value.trim(), gp = $('cfgGetPhotos').value.trim(), gs = $('cfgGetStaff').value.trim(), dp = $('cfgDeletePhoto').value.trim();
     if(!g && !s && !d){ showToast('No URLs to export yet.'); return; }
-    const text = 'get ' + g + '\nsave ' + s + '\ndelete ' + d + '\nuploadphoto ' + up + '\ngetphotos ' + gp + '\ngetstaff ' + gs + '\n';
+    const text = 'get ' + g + '\nsave ' + s + '\ndelete ' + d + '\nuploadphoto ' + up + '\ngetphotos ' + gp + '\ngetstaff ' + gs + '\ndeletephoto ' + dp + '\n';
     const blob = new Blob([text], { type:'text/plain' });
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
