@@ -1219,13 +1219,20 @@
     //    If items remain (offline or rejected), keep showing the local copy so nothing vanishes.
     if(outbox.length === 0){
       try{
+        const prevSignature = assets.map(a=>a.id+':'+a.dateUpdated).sort().join('|');
         const res = await fetch(cfg.get, { method:'POST' });
         if(!res.ok) throw new Error('HTTP ' + res.status);
         const data = await res.json();
         assets = Array.isArray(data) ? data.map(normaliseRemote) : [];
+        const changed = prevSignature !== assets.map(a=>a.id+':'+a.dateUpdated).sort().join('|');
         await saveCache();
         setConnBadge('online');
-        logEvent('success', 'In sync with SharePoint — ' + assets.length + ' asset' + (assets.length===1?'':'s') + '.', '');
+        // Silent background refreshes don't clutter the log unless something changed.
+        const silentReasons = ['auto refresh', 'tab visible', 'tab opened'];
+        const isSilent = silentReasons.includes(reason);
+        if(!isSilent || changed){
+          logEvent('success', (isSilent ? 'Refreshed — ' : 'In sync with SharePoint — ') + assets.length + ' asset' + (assets.length===1?'':'s') + '.', '');
+        }
       }catch(e){
         setConnBadge('error');
         logEvent('error', 'Could not refresh from SharePoint: ' + (e.message||e), 'Working from the local copy for now.');
@@ -1562,6 +1569,7 @@
       if(btn.dataset.tab !== 'scan') stopScanner();
       if(btn.dataset.tab === 'overview') renderOverview();
       if(btn.dataset.tab === 'log') renderLog();
+      if(btn.dataset.tab === 'inventory' || btn.dataset.tab === 'overview') maybeRefreshOnTabOpen();
     });
   });
 
@@ -2304,9 +2312,34 @@
     if(isConnected() && outbox.length) setConnBadge('error');
     updateSyncUI();
   });
+  // Retry queued changes quickly; separately, pull fresh data from SharePoint
+  // periodically even with nothing queued, so other devices' edits show up
+  // without a manual refresh.
+  let lastAutoSync = 0;
   setInterval(()=>{
     if(isConnected() && outbox.length && !syncing) sync('retry timer');
   }, 30000);
+  setInterval(()=>{
+    if(isConnected() && !syncing){ lastAutoSync = Date.now(); sync('auto refresh'); }
+  }, 45000);
+
+  // Refresh immediately when the app/tab regains focus (e.g. switching back
+  // from another app on the phone, or back to this browser tab on the PC).
+  document.addEventListener('visibilitychange', ()=>{
+    if(document.visibilityState === 'visible' && isConnected() && !syncing){
+      lastAutoSync = Date.now();
+      sync('tab visible');
+    }
+  });
+
+  // Refresh when opening Inventory or Overview, if it's been a little while,
+  // so switching tabs feels current without waiting for the timer.
+  function maybeRefreshOnTabOpen(){
+    if(isConnected() && !syncing && (Date.now() - lastAutoSync > 10000)){
+      lastAutoSync = Date.now();
+      sync('tab opened');
+    }
+  }
 
   // ---------- log buttons ----------
   $('btnCopyLog').addEventListener('click', ()=>{
