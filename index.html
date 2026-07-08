@@ -1586,6 +1586,7 @@
       setScanTargetUI('tag');
       startScanner();
       setScanStatus('Scan the asset tag first…', '');
+      setTimeout(()=>{ const r = $('reader'); if(r) r.scrollIntoView({ behavior:'smooth', block:'center' }); }, 150);
     });
   }
 
@@ -1686,12 +1687,18 @@
     }else{
       // asset tag scanned
       stopScanner();
-      handleIncomingCode(decodedText);
+      handleIncomingCode(decodedText, /*skipFocus*/ scanChain);
       if(scanChain){
-        // auto-advance to the serial scan without the user changing anything
+        // auto-advance to the serial scan without the user changing anything —
+        // stay put on the camera rather than jumping down to the form.
         setScanTargetUI('serial');
         showToast('Tag captured — now scan the serial.');
-        setTimeout(()=>{ startScanner(); setScanStatus('Now scan the serial number…', ''); }, 500);
+        setTimeout(()=>{
+          startScanner();
+          setScanStatus('Now scan the serial number…', '');
+          const reader = $('reader');
+          if(reader) reader.scrollIntoView({ behavior:'smooth', block:'center' });
+        }, 500);
       }
     }
   }
@@ -1702,7 +1709,7 @@
     el.className = 'scan-status' + (cls ? ' '+cls : '');
   }
 
-  function handleIncomingCode(code){
+  function handleIncomingCode(code, skipFocus){
     const existing = assets.find(a => a.id === code);
     $('fTagId').value = code;
     if(existing){
@@ -1713,7 +1720,9 @@
       $('fTagId').value = code;
       showFormBanner('New tag ID. Fill in the details below and save.');
     }
-    $('fName').focus();
+    // Skip the autofocus (and the scroll-to-field it triggers on mobile) when
+    // we're mid-chain into a serial scan — staying on the camera is what matters.
+    if(!skipFocus) $('fName').focus();
   }
 
   // ---------- form ----------
