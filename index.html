@@ -1684,7 +1684,7 @@
       if(scanChain){
         // auto-advance to the serial scan without the user changing anything —
         // stay put on the camera rather than jumping down to the form.
-        setScanTargetUI('serial');
+        scanTarget = 'serial';
         showToast('Tag captured — now scan the serial.');
         setTimeout(()=>{
           startScanner();
