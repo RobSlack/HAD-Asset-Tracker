@@ -227,7 +227,6 @@
   .photo-add-btn:hover{background:var(--bg); border-color:var(--accent);}
   .photo-capture-row{display:flex; gap:8px; flex-wrap:wrap; margin-top:10px;}
   .photo-cap{padding:8px 12px; font-size:12.5px;}
-  .photo-cap#btnCapTagSerial{background:var(--ink); color:#fff; border-color:var(--ink);}
   .photo-thumb .plabel{
     position:absolute; top:3px; left:3px; background:rgba(30,34,38,0.72); color:#fff;
     font-size:8.5px; padding:1px 5px; border-radius:4px; font-family:'IBM Plex Mono';
@@ -419,15 +418,11 @@
     <div class="card scan-card">
       <h2>Scan a barcode</h2>
       <p class="hint">Works on your phone or a computer with a webcam. Point the camera at the asset's barcode or QR label.</p>
-      <div class="scan-target" id="scanTargetToggle">
-        <span class="scan-target-label">Scan fills:</span>
-        <button type="button" class="scan-target-btn active" data-target="tag">Asset tag</button>
-        <button type="button" class="scan-target-btn" data-target="serial">Serial number</button>
-      </div>
       <div id="reader"></div>
       <div class="scan-controls">
-        <button class="btn btn-primary" id="btnStartScan">Start camera</button>
-        <button class="btn" id="btnScanChain">Scan tag → serial</button>
+        <button class="btn btn-primary" id="btnScanChain">1. Scan Tag → Serial</button>
+        <button class="btn" id="btnScanTagOnly">2. Scan Tag</button>
+        <button class="btn" id="btnScanSerialOnly">3. Scan Serial</button>
         <button class="btn" id="btnStopScan" style="display:none;">Stop camera</button>
       </div>
       <div class="scan-status" id="scanStatus"></div>
@@ -444,6 +439,10 @@
         <div class="field full">
           <label for="fTagId">Asset tag / barcode ID <span>required</span></label>
           <input type="text" id="fTagId" class="mono" placeholder="e.g. HAD-0231 or scanned code">
+        </div>
+        <div class="field full">
+          <label for="fSerial">Serial number <span class="scan-inline" id="btnScanSerial">⌑ scan</span></label>
+          <input type="text" id="fSerial" class="mono" placeholder="e.g. 5CD1234ABC">
         </div>
         <div class="field full">
           <label for="fName">Description</label>
@@ -465,10 +464,6 @@
             <option value="Under Repair">Under repair</option>
             <option value="Retired">Retired / disposed</option>
           </select>
-        </div>
-        <div class="field">
-          <label for="fSerial">Serial number <span class="scan-inline" id="btnScanSerial">⌑ scan</span></label>
-          <input type="text" id="fSerial" class="mono" placeholder="e.g. 5CD1234ABC">
         </div>
         <div class="field">
           <label for="fLocation">Location / room <span class="scan-inline manage-list-link" data-list="location">✎ manage</span></label>
@@ -505,14 +500,11 @@
           <div class="countdown-hint" id="leaseHint"></div>
         </div>
         <div class="field full photo-section">
-          <label>Photos</label>
-          <p class="hint" style="margin:0;">Capture the asset tag and serial (and condition for lease returns). Photos sync to SharePoint when photo sync is set up.</p>
+          <label>Condition photos</label>
+          <p class="hint" style="margin:0;">Useful for lease returns and condition records. Photos sync to SharePoint when photo sync is set up.</p>
           <input type="file" id="fPhotoInput" accept="image/*" capture="environment" multiple style="display:none;">
           <div class="photo-capture-row">
-            <button type="button" class="btn photo-cap" id="btnCapTagSerial">⌑ Tag + Serial</button>
-            <button type="button" class="btn photo-cap" data-label="Asset tag">Tag</button>
-            <button type="button" class="btn photo-cap" data-label="Serial">Serial</button>
-            <button type="button" class="btn photo-cap" data-label="Condition">Condition</button>
+            <button type="button" class="btn photo-cap" data-label="Condition">+ Add photo</button>
           </div>
           <div class="photo-strip" id="photoStrip"></div>
         </div>
@@ -1400,8 +1392,7 @@
     });
   }
 
-  // capture handling with an optional queue of labels (for the Tag+Serial chain)
-  let captureQueue = [];
+  // capture handling — Condition is the only photo type now
   let currentCaptureLabel = 'Condition';
   function startCapture(label){
     currentCaptureLabel = label || 'Condition';
@@ -1409,10 +1400,6 @@
   }
   document.querySelectorAll('.photo-cap[data-label]').forEach(btn=>{
     btn.addEventListener('click', ()=> startCapture(btn.dataset.label));
-  });
-  $('btnCapTagSerial').addEventListener('click', ()=>{
-    captureQueue = ['Serial'];          // after the first (Asset tag) shot, prompt for Serial
-    startCapture('Asset tag');
   });
 
   $('fPhotoInput').addEventListener('change', async (e)=>{
@@ -1433,11 +1420,6 @@
     }
     renderPhotoStrip();
     e.target.value = '';
-    // if a chained capture is queued (Tag + Serial), fire the next one
-    if(captureQueue.length){
-      const next = captureQueue.shift();
-      setTimeout(()=>{ showToast('Now capture the ' + next.toLowerCase() + '.'); startCapture(next); }, 350);
-    }
   });
 
   // ---------- central photo sync (SharePoint attachments) ----------
@@ -1578,39 +1560,46 @@
   let scanChain = false;  // when true, after a tag scan we auto-advance to serial
   let scanStarting = false;
 
-  $('btnStartScan').addEventListener('click', ()=> startScanner());
   $('btnStopScan').addEventListener('click', stopScanner);
-  if($('btnScanChain')){
-    $('btnScanChain').addEventListener('click', ()=>{
-      scanChain = true;
-      setScanTargetUI('tag');
-      startScanner();
-      setScanStatus('Scan the asset tag first…', '');
-      setTimeout(()=>{ const r = $('reader'); if(r) r.scrollIntoView({ behavior:'smooth', block:'center' }); }, 150);
-    });
+
+  function scrollToReader(){
+    setTimeout(()=>{ const r = $('reader'); if(r) r.scrollIntoView({ behavior:'smooth', block:'center' }); }, 150);
   }
 
-  function setScanTargetUI(target){
-    scanTarget = target;
-    document.querySelectorAll('.scan-target-btn').forEach(b=>b.classList.toggle('active', b.dataset.target===target));
-  }
-
-  // toggle: what does a scan fill?
-  document.querySelectorAll('.scan-target-btn').forEach(btn=>{
-    btn.addEventListener('click', ()=>{
-      scanChain = false; // manual choice cancels an auto chain
-      setScanTargetUI(btn.dataset.target);
-    });
+  // 1. Scan Tag → Serial (chained: tag first, then auto-advances to serial)
+  $('btnScanChain').addEventListener('click', ()=>{
+    scanChain = true;
+    scanTarget = 'tag';
+    startScanner();
+    setScanStatus('Scan the asset tag first…', '');
+    scrollToReader();
   });
 
-  // inline "scan" link next to the Serial number field
+  // 2. Scan Tag only
+  $('btnScanTagOnly').addEventListener('click', ()=>{
+    scanChain = false;
+    scanTarget = 'tag';
+    startScanner();
+    setScanStatus('Scanning the asset tag…', '');
+    scrollToReader();
+  });
+
+  // 3. Scan Serial only
+  $('btnScanSerialOnly').addEventListener('click', ()=>{
+    scanChain = false;
+    scanTarget = 'serial';
+    startScanner();
+    setScanStatus('Scanning the serial number…', '');
+    scrollToReader();
+  });
+
+  // inline "scan" link next to the Serial number field — same as button 3
   $('btnScanSerial').addEventListener('click', ()=>{
     scanChain = false;
-    setScanTargetUI('serial');
-    document.querySelector('nav.tabs button[data-tab="scan"]').click();
-    window.scrollTo({ top:0, behavior:'smooth' });
+    scanTarget = 'serial';
     startScanner();
     setScanStatus('Scanning into Serial number…', '');
+    scrollToReader();
   });
 
   async function startScanner(){
@@ -1618,7 +1607,9 @@
     scanStarting = true;
     const reader = $('reader');
     reader.style.display='block';
-    $('btnStartScan').style.display='none';
+    $('btnScanChain').style.display='none';
+    $('btnScanTagOnly').style.display='none';
+    $('btnScanSerialOnly').style.display='none';
     $('btnStopScan').style.display='inline-flex';
     setScanStatus(scanTarget==='serial' ? 'Starting camera (serial number)…' : 'Starting camera…', '');
 
@@ -1671,7 +1662,9 @@
   }
 
   function resetScanButtons(){
-    $('btnStartScan').style.display='inline-flex';
+    $('btnScanChain').style.display='inline-flex';
+    $('btnScanTagOnly').style.display='inline-flex';
+    $('btnScanSerialOnly').style.display='inline-flex';
     $('btnStopScan').style.display='none';
   }
 
