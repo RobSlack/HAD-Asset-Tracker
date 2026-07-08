@@ -1492,21 +1492,33 @@
 
   // merge remote photos into local cache for an asset (dedupe by remoteName)
   async function mergeRemotePhotos(tagId){
-    if(!hasPhotoSync()) return;
+    if(!hasPhotoSync()) return null;
     try{
       const remote = await fetchRemotePhotos(tagId);
-      if(!remote.length) return;
       let local = await loadPhotosFor(tagId);
+      const remoteNames = new Set(remote.map(r=>r.remoteName));
+      // Reconcile: drop any local photo that was previously synced (has a
+      // remoteName) but no longer exists on SharePoint — deleted elsewhere.
+      // Photos not yet uploaded from this device (no remoteName) are kept.
+      const before = local.length;
+      local = local.filter(p => !p.remoteName || remoteNames.has(p.remoteName));
+      const removed = before - local.length;
+      // Add anything on SharePoint that isn't in the local cache yet
       const haveNames = new Set(local.map(p=>p.remoteName).filter(Boolean));
       remote.forEach(r=>{ if(!haveNames.has(r.remoteName)) local.push(r); });
       await savePhotosFor(tagId, local);
+      if(removed){
+        logEvent('info', 'Removed ' + removed + ' photo' + (removed===1?'':'s') + ' for "' + tagId + '" deleted on another device.', '');
+      }
       // if this asset is currently open in the form, refresh the strip
       if($('fTagId').value.trim() === tagId){
         formPhotos = local;
         renderPhotoStrip();
       }
+      return local;
     }catch(e){
       logEvent('error', 'Could not fetch photos for "' + tagId + '": ' + (e.message||e), '');
+      return null;
     }
   }
 
@@ -2015,17 +2027,15 @@
       vgItem('Notes', a.notes, true)
     ].join('');
 
-    // photos: local cache first, then merge remote
+    // photos: show the local cache immediately, then reconcile against SharePoint
+    // (adds anything new, and removes anything deleted from another device)
     $('viewPhotos').innerHTML = '<div class="vp-empty">Loading photos…</div>';
     loadPhotosFor(a.id).then(async (photos)=>{
-      if(hasPhotoSync()){
-        try{
-          const remote = await fetchRemotePhotos(a.id);
-          const names = new Set(photos.map(p=>p.remoteName).filter(Boolean));
-          remote.forEach(r=>{ if(!names.has(r.remoteName)) photos.push(r); });
-        }catch(e){}
-      }
       renderViewPhotos(photos);
+      if(hasPhotoSync()){
+        const reconciled = await mergeRemotePhotos(a.id);
+        if(reconciled) renderViewPhotos(reconciled);
+      }
     });
 
     $('viewModal').classList.add('show');
