@@ -2156,21 +2156,21 @@
 
   // ---------- CSV import (Intune, Google Admin, spreadsheets, or any CSV with a header row) ----------
   const IMPORT_FIELDS = [
-    { key:'id', label:'Asset Tag', aliases:['asset tag','tag id','tagid','asset id','tag','barcode','asset number','device id'] },
+    { key:'id', label:'Asset Tag', aliases:['asset tag','tag id','tagid','asset id','tag','barcode','asset number','annotatedassetid','annotated asset id'] },
     { key:'serialNumber', label:'Serial Number', aliases:['serial number','serial no','serialnumber','serial','device serial number'] },
     { key:'name', label:'Description', aliases:['description','device name','name','asset description','model name'] },
     { key:'category', label:'Category', aliases:['category','asset category'] },
     { key:'deviceType', label:'Device Type', aliases:['device type','model','device model','hardware model'] },
-    { key:'status', label:'Status', aliases:['status','asset status','compliance state','enrollment status'] },
-    { key:'location', label:'Location', aliases:['location','room','site'] },
-    { key:'assignedTo', label:'Assigned To', aliases:['assigned to','department','user','user email','user principal name','primary user upn','owner','user display name','most recent user'] },
+    { key:'status', label:'Status', aliases:['status','asset status','compliance state','enrollment status','compliance','device state'] },
+    { key:'location', label:'Location', aliases:['location','room','site','annotatedlocation','annotated location'] },
+    { key:'assignedTo', label:'Assigned To', aliases:['assigned to','department','user','user email','user principal name','primary user upn','primary user email address','owner','user display name','most recent user','annotateduser','annotated user'] },
     { key:'purchaseDate', label:'Purchase Date', aliases:['purchase date','date purchased','enrolled date','enrollment date'] },
     { key:'value', label:'Value (£)', aliases:['value','cost','price'] },
     { key:'warrantyProvider', label:'Warranty Provider', aliases:['warranty provider','warranty'] },
     { key:'warrantyExpiry', label:'Warranty Expiry', aliases:['warranty expiry','warranty end date','warranty expiration'] },
     { key:'isLeased', label:'Leased', aliases:['leased','is leased','lease'] },
     { key:'leaseEndDate', label:'Lease End Date', aliases:['lease end date','lease expiry'] },
-    { key:'notes', label:'Notes', aliases:['notes','comments','remarks'] }
+    { key:'notes', label:'Notes', aliases:['notes','comments','remarks','annotatednotes','annotated notes'] }
   ];
 
   let importHeaders = [];
@@ -2243,6 +2243,19 @@
     const d = new Date(s);
     if(!isNaN(d.getTime())) return d.toISOString().slice(0,10);
     return '';
+  }
+
+  // Translate provider-specific status wording (Google Admin, Intune, etc.) into
+  // Tagbook's own vocabulary rather than importing raw jargon like "PROVISIONED".
+  function normalizeStatusForImport(raw){
+    const s = String(raw||'').trim().toLowerCase();
+    if(!s) return '';
+    if(/noncompliant|non-compliant|not compliant/.test(s)) return 'Under Repair';
+    if(/repair|fault|broken/.test(s)) return 'Under Repair';
+    if(/retire|dispos|deprovision|disabled|wiped/.test(s)) return 'Retired';
+    if(/storage|stock|spare|unassigned/.test(s)) return 'In Storage';
+    if(/compliant|provisioned|active|enrolled|in use|assigned/.test(s)) return 'In Use';
+    return ''; // unrecognised — caller defaults to In Use rather than importing raw text
   }
 
   function importModalReset(){
@@ -2323,15 +2336,16 @@
     let id = val('id');
     const serial = val('serialNumber');
     if(!id && $('importUseSerialAsTag').checked) id = serial;
+    const deviceType = val('deviceType');
     return {
       id,
-      name: val('name'),
+      name: val('name') || deviceType, // fall back to the model/device type if there's no description column
       category: val('category') || 'IT Equipment',
-      status: val('status') || 'In Use',
+      status: normalizeStatusForImport(val('status')) || 'In Use',
       location: val('location'),
       assignedTo: val('assignedTo'),
       serialNumber: serial,
-      deviceType: val('deviceType'),
+      deviceType: deviceType,
       purchaseDate: normalizeDateForImport(val('purchaseDate')),
       value: (function(){ const v = val('value').replace(/[^0-9.\-]/g,''); return v ? parseFloat(v) : null; })(),
       warrantyProvider: val('warrantyProvider'),
