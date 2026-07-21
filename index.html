@@ -226,6 +226,12 @@
   .field input.mono{letter-spacing:0.02em;}
   textarea{resize:vertical; min-height:56px;}
   .form-actions{display:flex; gap:10px; margin-top:18px; flex-wrap:wrap;}
+  .edit-nav{
+    display:flex; align-items:center; justify-content:space-between; gap:10px;
+    margin-top:16px; padding-top:16px; border-top:1px solid var(--border);
+  }
+  .edit-nav .btn{flex:0 0 auto;}
+  .edit-nav-pos{font-family:'IBM Plex Mono'; font-size:12px; color:var(--ink-faint); text-align:center; flex:1;}
   .field-checkbox{flex-direction:row; align-items:center; gap:8px;}
   .field-checkbox input{width:16px; height:16px; accent-color:var(--accent);}
   .field-checkbox label{font-size:13px; color:var(--ink); font-weight:500;}
@@ -539,6 +545,11 @@
           <label for="fNotes">Notes</label>
           <textarea id="fNotes" placeholder="Condition, anything worth flagging"></textarea>
         </div>
+      </div>
+      <div class="edit-nav" id="editNav" style="display:none;">
+        <button type="button" class="btn" id="btnPrevAsset">‹ Previous</button>
+        <span class="edit-nav-pos" id="editNavPos"></span>
+        <button type="button" class="btn" id="btnNextAsset">Next ›</button>
       </div>
       <div class="form-actions">
         <button class="btn btn-primary" id="btnSaveAsset">Save asset</button>
@@ -1826,6 +1837,7 @@
     editingId = null;
     $('btnCancelEdit').style.display='none';
     $('btnSaveAsset').textContent='Save asset';
+    $('editNav').style.display='none';
   }
 
   function loadAssetIntoForm(a){
@@ -1853,6 +1865,7 @@
     editingId = a.id;
     $('btnCancelEdit').style.display='inline-flex';
     $('btnSaveAsset').textContent='Update asset';
+    updateEditNav();
     updateCountdownHints();
     formPhotos = [];
     renderPhotoStrip();
@@ -1862,6 +1875,32 @@
       mergeRemotePhotos(a.id); // pull any photos taken on other devices
     });
   }
+
+  // Previous/Next step through the same filtered/sorted list Inventory is showing,
+  // so navigation follows whatever search or filter was active when you opened this asset.
+  function updateEditNav(){
+    const nav = $('editNav');
+    if(!editingId){ nav.style.display = 'none'; return; }
+    const list = getFilteredSortedAssets();
+    const idx = list.findIndex(a=>a.id === editingId);
+    if(idx === -1){ nav.style.display = 'none'; return; }
+    nav.style.display = 'flex';
+    $('editNavPos').textContent = (idx+1) + ' of ' + list.length;
+    $('btnPrevAsset').disabled = (idx <= 0);
+    $('btnNextAsset').disabled = (idx >= list.length - 1);
+  }
+
+  function goToRelativeAsset(step){
+    const list = getFilteredSortedAssets();
+    const idx = list.findIndex(a=>a.id === editingId);
+    if(idx === -1) return;
+    const next = list[idx + step];
+    if(!next){ showToast(step > 0 ? 'This is the last asset in the list.' : 'This is the first asset in the list.'); return; }
+    loadAssetIntoForm(next);
+    hideFormBanner();
+  }
+  $('btnPrevAsset').addEventListener('click', ()=> goToRelativeAsset(-1));
+  $('btnNextAsset').addEventListener('click', ()=> goToRelativeAsset(1));
 
   $('btnSaveAsset').addEventListener('click', async ()=>{
     const id = $('fTagId').value.trim();
@@ -1960,12 +1999,14 @@
     return d.innerHTML;
   }
 
-  function renderInventory(){
+  // shared by the Inventory grid and the Edit form's Previous/Next navigation,
+  // so "next" always means "next in the list you were just looking at"
+  function getFilteredSortedAssets(){
     const q = $('searchBox').value.trim().toLowerCase();
     const catF = $('filterCategory').value;
     const statF = $('filterStatus').value;
 
-    let list = assets.filter(a=>{
+    return assets.filter(a=>{
       if(catF && a.category !== catF) return false;
       if(statF && a.status !== statF) return false;
       if(q){
@@ -1974,6 +2015,10 @@
       }
       return true;
     }).sort((a,b)=> (b.dateUpdated||'').localeCompare(a.dateUpdated||''));
+  }
+
+  function renderInventory(){
+    let list = getFilteredSortedAssets();
 
     grid.innerHTML = '';
     $('invEmpty').style.display = list.length ? 'none' : 'block';
