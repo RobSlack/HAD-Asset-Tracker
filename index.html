@@ -170,6 +170,33 @@
   .view-lightbox{position:fixed; inset:0; background:rgba(0,0,0,0.85); display:none; align-items:center; justify-content:center; z-index:80; padding:20px;}
   .view-lightbox.show{display:flex;}
   .view-lightbox img{max-width:100%; max-height:100%; border-radius:8px;}
+  .import-modal{max-width:640px; width:100%; max-height:86vh; overflow-y:auto;}
+  .import-summary{
+    font-size:12.5px; color:var(--ink-soft); background:var(--bg); border:1px solid var(--border);
+    border-radius:7px; padding:8px 12px; margin-bottom:14px;
+  }
+  .import-map{display:flex; flex-direction:column; gap:8px;}
+  .import-row{
+    display:grid; grid-template-columns:150px 1fr; align-items:center; gap:10px;
+    font-size:13px;
+  }
+  .import-row label{color:var(--ink); font-weight:600; font-size:12.5px;}
+  .import-row label span{font-weight:400; color:var(--ink-faint); text-transform:none; letter-spacing:0;}
+  .import-row select{
+    border:1px solid var(--border); border-radius:7px; padding:7px 9px; font-size:12.5px;
+    background:var(--surface); color:var(--ink); width:100%;
+  }
+  .import-preview-wrap{overflow-x:auto; border:1px solid var(--border); border-radius:7px; max-height:220px; overflow-y:auto;}
+  table.import-preview{border-collapse:collapse; width:100%; font-size:11px; white-space:nowrap;}
+  table.import-preview th, table.import-preview td{
+    border:1px solid var(--border); padding:5px 8px; text-align:left;
+  }
+  table.import-preview th{background:var(--bg); position:sticky; top:0; font-weight:600;}
+  table.import-preview td.warn{color:var(--danger);}
+  .import-progress{margin-top:14px;}
+  .import-progress-bar{background:var(--bg); border-radius:6px; height:10px; overflow:hidden; border:1px solid var(--border);}
+  .import-progress-fill{height:100%; background:var(--accent); width:0%; transition:width .2s;}
+  .import-progress-text{font-size:12px; color:var(--ink-soft); margin-top:6px; font-family:'IBM Plex Mono';}
 
   .divider-label{
     display:flex;align-items:center;gap:10px;margin:18px 0 14px;
@@ -534,7 +561,10 @@
       </select>
     </div>
     <div class="top-actions">
+      <button class="btn" id="btnDownloadTemplate">Download CSV template</button>
+      <button class="btn" id="btnImportCsv">Import CSV</button>
       <button class="btn" id="btnExport">Export CSV</button>
+      <input type="file" id="assetCsvInput" accept=".csv,text/csv" style="display:none">
     </div>
     <div id="invGrid" class="inv-grid"></div>
     <div class="empty-state" id="invEmpty" style="display:none;">
@@ -675,6 +705,36 @@
 </div>
 
 <div class="view-lightbox" id="viewLightbox"><img id="viewLightboxImg" src="" alt="Photo"></div>
+
+<div class="modal-backdrop" id="importModal">
+  <div class="modal import-modal">
+    <h3>Import assets from CSV</h3>
+    <p id="importIntro">Works with an export from Intune, Google Admin, a spreadsheet — or anything with a header row. Match each Tagbook field to a column from your file below.</p>
+
+    <div id="importMapWrap" style="display:none;">
+      <div class="import-summary" id="importSummary"></div>
+      <div class="import-map" id="importMap"></div>
+
+      <div class="field-checkbox" style="margin:14px 0;">
+        <input type="checkbox" id="importUseSerialAsTag" checked>
+        <label for="importUseSerialAsTag">Rows with no Asset Tag: use the Serial Number as the tag instead</label>
+      </div>
+
+      <h4 style="margin:16px 0 8px; font-size:12.5px; text-transform:uppercase; letter-spacing:0.06em; color:var(--ink-soft);">Preview (first rows)</h4>
+      <div class="import-preview-wrap"><table class="import-preview" id="importPreview"></table></div>
+
+      <div class="import-progress" id="importProgress" style="display:none;">
+        <div class="import-progress-bar"><div class="import-progress-fill" id="importProgressFill"></div></div>
+        <div class="import-progress-text" id="importProgressText"></div>
+      </div>
+    </div>
+
+    <div class="row" style="margin-top:18px; justify-content:space-between;">
+      <button class="btn btn-ghost" id="btnCloseImport">Cancel</button>
+      <button class="btn btn-primary" id="btnRunImport" style="display:none;">Import assets</button>
+    </div>
+  </div>
+</div>
 <div class="toast" id="toast"></div>
 
 <script>
@@ -2093,6 +2153,281 @@
     sel.innerHTML = '<option value="">All categories</option>' + cats.map(c=>`<option value="${esc(c)}">${esc(c)}</option>`).join('');
     sel.value = cats.includes(current) ? current : '';
   }
+
+  // ---------- CSV import (Intune, Google Admin, spreadsheets, or any CSV with a header row) ----------
+  const IMPORT_FIELDS = [
+    { key:'id', label:'Asset Tag', aliases:['asset tag','tag id','tagid','asset id','tag','barcode','asset number','device id'] },
+    { key:'serialNumber', label:'Serial Number', aliases:['serial number','serial no','serialnumber','serial','device serial number'] },
+    { key:'name', label:'Description', aliases:['description','device name','name','asset description','model name'] },
+    { key:'category', label:'Category', aliases:['category','asset category'] },
+    { key:'deviceType', label:'Device Type', aliases:['device type','model','device model','hardware model'] },
+    { key:'status', label:'Status', aliases:['status','asset status','compliance state','enrollment status'] },
+    { key:'location', label:'Location', aliases:['location','room','site'] },
+    { key:'assignedTo', label:'Assigned To', aliases:['assigned to','department','user','user email','user principal name','primary user upn','owner','user display name','most recent user'] },
+    { key:'purchaseDate', label:'Purchase Date', aliases:['purchase date','date purchased','enrolled date','enrollment date'] },
+    { key:'value', label:'Value (£)', aliases:['value','cost','price'] },
+    { key:'warrantyProvider', label:'Warranty Provider', aliases:['warranty provider','warranty'] },
+    { key:'warrantyExpiry', label:'Warranty Expiry', aliases:['warranty expiry','warranty end date','warranty expiration'] },
+    { key:'isLeased', label:'Leased', aliases:['leased','is leased','lease'] },
+    { key:'leaseEndDate', label:'Lease End Date', aliases:['lease end date','lease expiry'] },
+    { key:'notes', label:'Notes', aliases:['notes','comments','remarks'] }
+  ];
+
+  let importHeaders = [];
+  let importRows = [];      // array of arrays, aligned with importHeaders
+  let importMapping = {};   // field key -> header index, or -1 for "don't import"
+
+  function normaliseHeader(h){
+    return String(h||'').toLowerCase().replace(/[^a-z0-9]+/g,' ').trim();
+  }
+
+  // Small dependency-free CSV parser: handles quoted fields, escaped "" quotes,
+  // commas/newlines inside quotes, and both \r\n and \n line endings.
+  function parseCSV(text){
+    const rows = [];
+    let row = [], field = '', inQuotes = false;
+    text = text.replace(/\r\n/g, '\n');
+    for(let i=0; i<text.length; i++){
+      const c = text[i];
+      if(inQuotes){
+        if(c === '"'){
+          if(text[i+1] === '"'){ field += '"'; i++; }
+          else inQuotes = false;
+        }else field += c;
+      }else{
+        if(c === '"') inQuotes = true;
+        else if(c === ','){ row.push(field); field = ''; }
+        else if(c === '\n'){ row.push(field); rows.push(row); row = []; field = ''; }
+        else field += c;
+      }
+    }
+    if(field.length || row.length){ row.push(field); rows.push(row); }
+    while(rows.length && rows[rows.length-1].every(c=>c.trim()==='')) rows.pop();
+    return rows;
+  }
+
+  function guessMapping(headers){
+    const mapping = {};
+    const used = new Set();
+    const normed = headers.map(normaliseHeader);
+    IMPORT_FIELDS.forEach(f=>{
+      let found = -1;
+      for(let i=0;i<normed.length;i++){
+        if(used.has(i)) continue;
+        if(f.aliases.includes(normed[i])){ found = i; break; }
+      }
+      if(found === -1){
+        for(let i=0;i<normed.length;i++){
+          if(used.has(i)) continue;
+          if(f.aliases.some(a => normed[i].includes(a))){ found = i; break; }
+        }
+      }
+      if(found !== -1) used.add(found);
+      mapping[f.key] = found;
+    });
+    return mapping;
+  }
+
+  function normalizeDateForImport(raw){
+    if(!raw) return '';
+    const s = String(raw).trim();
+    if(!s) return '';
+    if(/^\d{4}-\d{2}-\d{2}/.test(s)) return s.slice(0,10);
+    let m = s.match(/^(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{4})$/);
+    if(m){
+      let a=m[1], b=m[2], y=m[3];
+      let day, month;
+      if(parseInt(a,10) > 12){ day=a; month=b; } else { day=b; month=a; }
+      return y + '-' + String(month).padStart(2,'0') + '-' + String(day).padStart(2,'0');
+    }
+    const d = new Date(s);
+    if(!isNaN(d.getTime())) return d.toISOString().slice(0,10);
+    return '';
+  }
+
+  function importModalReset(){
+    importHeaders = []; importRows = []; importMapping = {};
+    $('importMapWrap').style.display = 'none';
+    $('importIntro').style.display = 'block';
+    $('btnRunImport').style.display = 'none';
+    $('importProgress').style.display = 'none';
+    $('importProgressFill').style.width = '0%';
+    $('assetCsvInput').value = '';
+    const pick = document.getElementById('btnPickCsvFile');
+    if(pick) pick.style.display = 'inline-flex';
+  }
+
+  $('btnImportCsv').addEventListener('click', ()=>{
+    importModalReset();
+    $('importModal').classList.add('show');
+  });
+  $('btnCloseImport').addEventListener('click', ()=>{
+    $('importModal').classList.remove('show');
+  });
+  if(!document.getElementById('btnPickCsvFile')){
+    $('importIntro').insertAdjacentHTML('afterend',
+      '<button type="button" class="btn btn-primary" id="btnPickCsvFile" style="margin-bottom:14px;">Choose CSV file…</button>');
+    $('btnPickCsvFile').addEventListener('click', ()=> $('assetCsvInput').click());
+  }
+
+  $('assetCsvInput').addEventListener('change', async (e)=>{
+    const file = e.target.files && e.target.files[0];
+    if(!file) return;
+    let text;
+    try{ text = await file.text(); }
+    catch(_){ showToast('Could not read that file.'); return; }
+
+    const parsed = parseCSV(text);
+    if(parsed.length < 2){ showToast('That CSV has no data rows.'); return; }
+    importHeaders = parsed[0].map(h=>h.trim());
+    importRows = parsed.slice(1);
+    importMapping = guessMapping(importHeaders);
+
+    $('importSummary').textContent = importRows.length + ' row' + (importRows.length===1?'':'s') + ' found in "' + file.name + '" — check the mapping below, then Import.';
+    renderImportMap();
+    renderImportPreview();
+    $('importIntro').style.display = 'none';
+    document.getElementById('btnPickCsvFile').style.display = 'none';
+    $('importMapWrap').style.display = 'block';
+    $('btnRunImport').style.display = 'inline-flex';
+  });
+
+  function renderImportMap(){
+    const box = $('importMap');
+    box.innerHTML = '';
+    IMPORT_FIELDS.forEach(f=>{
+      const row = document.createElement('div');
+      row.className = 'import-row';
+      const label = document.createElement('label');
+      label.innerHTML = f.label + (f.key==='id' ? ' <span>(or use serial below)</span>' : '');
+      const sel = document.createElement('select');
+      sel.dataset.field = f.key;
+      let opts = '<option value="-1">— Don\'t import —</option>';
+      importHeaders.forEach((h,i)=> opts += `<option value="${i}">${esc(h)}</option>`);
+      sel.innerHTML = opts;
+      sel.value = String(importMapping[f.key] != null ? importMapping[f.key] : -1);
+      sel.addEventListener('change', ()=>{
+        importMapping[f.key] = parseInt(sel.value, 10);
+        renderImportPreview();
+      });
+      row.appendChild(label); row.appendChild(sel);
+      box.appendChild(row);
+    });
+  }
+
+  function buildRecordFromRow(row){
+    const val = (key)=>{
+      const idx = importMapping[key];
+      return (idx != null && idx >= 0 && row[idx] != null) ? String(row[idx]).trim() : '';
+    };
+    let id = val('id');
+    const serial = val('serialNumber');
+    if(!id && $('importUseSerialAsTag').checked) id = serial;
+    return {
+      id,
+      name: val('name'),
+      category: val('category') || 'IT Equipment',
+      status: val('status') || 'In Use',
+      location: val('location'),
+      assignedTo: val('assignedTo'),
+      serialNumber: serial,
+      deviceType: val('deviceType'),
+      purchaseDate: normalizeDateForImport(val('purchaseDate')),
+      value: (function(){ const v = val('value').replace(/[^0-9.\-]/g,''); return v ? parseFloat(v) : null; })(),
+      warrantyProvider: val('warrantyProvider'),
+      warrantyExpiry: normalizeDateForImport(val('warrantyExpiry')),
+      isLeased: /^(y|yes|true|1)$/i.test(val('isLeased')),
+      leaseEndDate: normalizeDateForImport(val('leaseEndDate')),
+      notes: val('notes')
+    };
+  }
+
+  function renderImportPreview(){
+    const rowsToShow = importRows.slice(0, 6);
+    const cols = ['id','serialNumber','name','category','status'];
+    const colLabels = ['Asset Tag','Serial','Description','Category','Status'];
+    let html = '<thead><tr>' + colLabels.map(c=>'<th>'+c+'</th>').join('') + '</tr></thead><tbody>';
+    rowsToShow.forEach(row=>{
+      const rec = buildRecordFromRow(row);
+      html += '<tr>' + cols.map(c=>{
+        const v = rec[c];
+        const missing = c==='id' && !v;
+        return '<td class="' + (missing?'warn':'') + '">' + esc(v || (missing?'(no tag/serial)':'')) + '</td>';
+      }).join('') + '</tr>';
+    });
+    html += '</tbody>';
+    $('importPreview').innerHTML = html;
+  }
+
+  $('importUseSerialAsTag').addEventListener('change', renderImportPreview);
+
+  $('btnRunImport').addEventListener('click', async ()=>{
+    $('btnRunImport').disabled = true;
+    const newOutboxOps = [];
+    let imported = 0, skipped = 0;
+    const now = new Date().toISOString();
+
+    importRows.forEach(row=>{
+      const rec = buildRecordFromRow(row);
+      if(!rec.id){ skipped++; return; }
+      const existingIdx = assets.findIndex(a=>a.id===rec.id);
+      rec.dateAdded = existingIdx>-1 ? assets[existingIdx].dateAdded : now;
+      rec.dateUpdated = now;
+      rec.photoCount = existingIdx>-1 ? (assets[existingIdx].photoCount||0) : 0;
+      if(existingIdx>-1) assets[existingIdx] = rec; else assets.push(rec);
+      newOutboxOps.push({ op:'save', id:rec.id, record:rec, ts:Date.now() });
+      imported++;
+    });
+
+    if(isConnected()){
+      const newIds = new Set(newOutboxOps.map(o=>o.id));
+      outbox = outbox.filter(o=> !(o.op==='save' && newIds.has(o.id)));
+      outbox.push(...newOutboxOps);
+      await saveCache();
+      await saveOutbox();
+      renderAll();
+      updateSyncUI();
+      showToast('Imported ' + imported + ' asset' + (imported===1?'':'s') + (skipped ? ', skipped ' + skipped + ' (no tag or serial)' : '') + ' — uploading to SharePoint.');
+      startImportProgress(newIds, imported);
+      sync('csv import');
+    }else{
+      await persistLocal();
+      renderAll();
+      showToast('Imported ' + imported + ' asset' + (imported===1?'':'s') + (skipped ? ', skipped ' + skipped : '') + ' (local).');
+      $('importModal').classList.remove('show');
+    }
+    $('btnRunImport').disabled = false;
+  });
+
+  function startImportProgress(importedIds, total){
+    $('importProgress').style.display = 'block';
+    const poll = setInterval(()=>{
+      const remaining = outbox.filter(o=> o.op==='save' && importedIds.has(o.id)).length;
+      const done = Math.max(0, total - remaining);
+      const pct = total ? Math.min(100, Math.round(done/total*100)) : 100;
+      $('importProgressFill').style.width = pct + '%';
+      $('importProgressText').textContent = remaining>0
+        ? ('Uploading to SharePoint — ' + done + ' of ' + total + '…')
+        : ('Done — ' + total + ' of ' + total + ' uploaded.');
+      if(remaining === 0){
+        clearInterval(poll);
+        showToast('CSV import finished uploading.');
+      }
+    }, 800);
+  }
+
+  $('btnDownloadTemplate').addEventListener('click', ()=>{
+    const headers = ['Asset Tag','Serial Number','Description','Category','Device Type','Status','Location','Assigned To','Purchase Date (YYYY-MM-DD)','Value','Warranty Provider','Warranty Expiry (YYYY-MM-DD)','Leased (Yes/No)','Lease End Date (YYYY-MM-DD)','Notes'];
+    const example = ['HAD-0231','5CD1234ABC','Dell Latitude 5440 laptop','IT Equipment','Laptop','In Use','Room 14','Geography','2025-09-01','650','Dell ProSupport','2028-09-01','No','','Good condition'];
+    const csvEsc = function(v){ v=String(v==null?'':v); return /[",\n]/.test(v) ? '"'+v.replace(/"/g,'""')+'"' : v; };
+    const text = headers.map(csvEsc).join(',') + '\n' + example.map(csvEsc).join(',') + '\n';
+    const blob = new Blob([text], { type:'text/csv' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url; link.download = 'tagbook-import-template.csv';
+    link.click();
+    URL.revokeObjectURL(url);
+  });
 
   // ---------- overview ----------
   function renderOverview(){
