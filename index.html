@@ -650,6 +650,19 @@
         Anyone who can open this app can see these URLs, and anyone with a URL can run that flow. That's normal for an internal tool, but don't share the app or URLs outside school. If a signature is ever leaked, you can regenerate it in Power Automate and paste the new URL here.
       </div>
     </div>
+
+    <div class="card settings-card">
+      <h2>Tag prefixes to ignore when scanning</h2>
+      <p class="hint">If some asset tags include a prefix that others don't (e.g. imported devices tagged <span class="mono">TAW100CB00974</span> alongside hand-labelled tags without it), list the prefixes here — comma separated. When a scan or a typed tag doesn't match anything, the app also checks again with these prefixes stripped from the start, so it still finds the existing record.</p>
+      <div class="url-field">
+        <label for="tagPrefixesInput">Prefixes</label>
+        <input type="text" id="tagPrefixesInput" placeholder="e.g. TAW100CB, TAW100WSF" spellcheck="false">
+      </div>
+      <div class="form-actions">
+        <button class="btn btn-primary" id="btnSaveTagPrefixes">Save prefixes</button>
+      </div>
+      <div class="settings-status" id="tagPrefixesStatus"></div>
+    </div>
   </section>
 
   <!-- LOG -->
@@ -1785,8 +1798,74 @@
     el.className = 'scan-status' + (cls ? ' '+cls : '');
   }
 
+  // ---------- tag prefix handling (some tags carry a prefix, some don't) ----------
+  let tagPrefixes = [];
+
+  async function loadTagPrefixes(){
+    try{
+      const res = await storage.get('tag-prefixes', true);
+      if(res && res.value){ const arr = JSON.parse(res.value); if(Array.isArray(arr)) tagPrefixes = arr; }
+    }catch(e){ /* none saved yet */ }
+    $('tagPrefixesInput').value = tagPrefixes.join(', ');
+  }
+  async function saveTagPrefixes(){
+    const raw = $('tagPrefixesInput').value;
+    tagPrefixes = raw.split(',').map(s=>s.trim()).filter(Boolean);
+    try{ await storage.set('tag-prefixes', JSON.stringify(tagPrefixes), true); }catch(e){}
+  }
+  $('btnSaveTagPrefixes').addEventListener('click', async ()=>{
+    await saveTagPrefixes();
+    const el = $('tagPrefixesStatus');
+    el.textContent = tagPrefixes.length ? 'Saved — ignoring: ' + tagPrefixes.join(', ') : 'Saved — no prefixes configured.';
+    el.className = 'settings-status ok';
+  });
+
+  // strip the longest matching configured prefix from the start of a tag (case-insensitive)
+  function stripKnownPrefix(str){
+    const s = String(str||'');
+    const upper = s.toUpperCase();
+    let best = '';
+    tagPrefixes.forEach(p=>{
+      const pu = p.toUpperCase().trim();
+      if(pu && upper.startsWith(pu) && pu.length > best.length) best = pu;
+    });
+    return best ? s.slice(best.length) : s;
+  }
+  function normalizeTagKey(str){
+    return stripKnownPrefix(str).trim().toUpperCase();
+  }
+  // find an existing asset for a scanned/typed code:
+  //  1. exact match
+  //  2. strip a configured prefix from either side and compare what's left
+  //  3. fall back to "is one code a trailing portion of the other" — catches
+  //     a prefix trimmed only partway (e.g. "CB00974" vs "TAW100CB00974")
+  //     but only when that matches exactly one asset, to avoid guessing wrong
+  function findExistingAssetForCode(code){
+    if(!code) return null;
+    let hit = assets.find(a => a.id === code);
+    if(hit) return hit;
+
+    const key = normalizeTagKey(code);
+    if(key){
+      hit = assets.find(a => normalizeTagKey(a.id) === key);
+      if(hit) return hit;
+    }
+
+    const MIN_SUFFIX_LEN = 4;
+    const upperCode = String(code).toUpperCase();
+    if(upperCode.length >= MIN_SUFFIX_LEN){
+      const matches = assets.filter(a=>{
+        const upperId = String(a.id).toUpperCase();
+        if(upperId.length < MIN_SUFFIX_LEN) return false;
+        return upperId.endsWith(upperCode) || upperCode.endsWith(upperId);
+      });
+      if(matches.length === 1) return matches[0];
+    }
+    return null;
+  }
+
   function handleIncomingCode(code, skipFocus){
-    const existing = assets.find(a => a.id === code);
+    const existing = findExistingAssetForCode(code);
     $('fTagId').value = code;
     if(existing){
       loadAssetIntoForm(existing);
@@ -1966,8 +2045,8 @@
   $('fTagId').addEventListener('change', ()=>{
     const id = $('fTagId').value.trim();
     if(!id) return;
-    const existing = assets.find(a=>a.id===id);
-    if(existing && editingId !== id){
+    const existing = findExistingAssetForCode(id);
+    if(existing && editingId !== existing.id){
       loadAssetIntoForm(existing);
       showFormBanner('Already in the ledger — editing "' + existing.name + '".');
     }
@@ -2777,6 +2856,7 @@
     await loadConfig();
     await loadLists();
     await loadStaff();
+    await loadTagPrefixes();
     await loadAssets();
     renderPhotoStrip();
     updateCountdownHints();
