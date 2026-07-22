@@ -153,6 +153,29 @@
   }
   .cat-item .cat-rm:hover{background:var(--danger-tint);}
   .cat-empty{color:var(--ink-faint); font-size:13px; text-align:center; padding:14px;}
+  .sig-pad-wrap{position:relative; display:inline-block;}
+  .sig-pad{
+    border:1px solid var(--border); border-radius:8px; background:var(--bg);
+    touch-action:none; display:block; max-width:100%;
+  }
+  .sig-clear{position:absolute; top:6px; right:6px; padding:4px 10px; font-size:11px;}
+  .history-list{display:flex; flex-direction:column; gap:0; max-height:260px; overflow-y:auto; margin-top:8px;}
+  .history-item{
+    display:flex; gap:10px; padding:9px 0; border-bottom:1px solid var(--border); font-size:12.5px;
+  }
+  .history-item:last-child{border-bottom:none;}
+  .history-dot{
+    width:8px; height:8px; border-radius:50%; background:var(--accent); margin-top:5px; flex-shrink:0;
+  }
+  .history-dot.status{background:var(--blue);}
+  .history-dot.location{background:var(--amber);}
+  .history-dot.assignment{background:#8B5FBF;}
+  .history-dot.photo{background:var(--accent-dark);}
+  .history-dot.created{background:var(--ink);}
+  .history-body{flex:1;}
+  .history-detail{color:var(--ink);}
+  .history-meta{color:var(--ink-faint); font-family:'IBM Plex Mono'; font-size:10.5px; margin-top:2px;}
+  .history-empty{color:var(--ink-faint); font-size:12.5px; padding:8px 0;}
   .view-modal{max-width:520px; width:100%;}
   .view-head{display:flex; align-items:flex-start; justify-content:space-between; gap:12px; margin-bottom:12px;}
   .view-tag{font-size:20px; font-weight:700; letter-spacing:0.01em; color:var(--ink);}
@@ -492,10 +515,17 @@
         <div class="field">
           <label for="fStatus">Status</label>
           <select id="fStatus">
-            <option value="In Use">In use</option>
+            <option value="Ordered">Ordered</option>
+            <option value="Delivered">Delivered</option>
+            <option value="In Build">In build</option>
+            <option value="In Stock">In stock</option>
             <option value="In Storage">In storage</option>
+            <option value="In Use">In use</option>
+            <option value="Issued">Issued</option>
             <option value="Under Repair">Under repair</option>
-            <option value="Retired">Retired / disposed</option>
+            <option value="Returned">Returned</option>
+            <option value="Retired">Retired</option>
+            <option value="Disposed">Disposed</option>
           </select>
         </div>
         <div class="field">
@@ -550,6 +580,10 @@
         <button type="button" class="btn" id="btnPrevAsset">‹ Previous</button>
         <span class="edit-nav-pos" id="editNavPos"></span>
         <button type="button" class="btn" id="btnNextAsset">Next ›</button>
+      </div>
+      <div class="form-actions" id="checkActions" style="display:none;">
+        <button class="btn" id="btnCheckOut">Check out…</button>
+        <button class="btn" id="btnCheckIn">Check in…</button>
       </div>
       <div class="form-actions">
         <button class="btn btn-primary" id="btnSaveAsset">Save asset</button>
@@ -627,6 +661,14 @@
         <label for="cfgDeletePhoto">Delete photo URL <span style="font-weight:400;color:var(--ink-faint);">(optional — removes photos from SharePoint too)</span></label>
         <input type="text" id="cfgDeletePhoto" placeholder="https://…/workflows/…/invoke?api-version=1&amp;sp=…&amp;sv=1.0&amp;sig=…" spellcheck="false">
       </div>
+      <div class="url-field">
+        <label for="cfgAddHistory">Add history entry URL <span style="font-weight:400;color:var(--ink-faint);">(optional — asset audit trail)</span></label>
+        <input type="text" id="cfgAddHistory" placeholder="https://…/workflows/…/invoke?api-version=1&amp;sp=…&amp;sv=1.0&amp;sig=…" spellcheck="false">
+      </div>
+      <div class="url-field">
+        <label for="cfgGetHistory">Get history URL <span style="font-weight:400;color:var(--ink-faint);">(optional — asset audit trail)</span></label>
+        <input type="text" id="cfgGetHistory" placeholder="https://…/workflows/…/invoke?api-version=1&amp;sp=…&amp;sv=1.0&amp;sig=…" spellcheck="false">
+      </div>
 
       <div class="form-actions">
         <button class="btn btn-primary" id="btnSaveConfig">Save &amp; connect</button>
@@ -693,6 +735,79 @@
   </div>
 </div>
 
+<div class="modal-backdrop" id="navConfirmModal">
+  <div class="modal">
+    <h3>Save changes first?</h3>
+    <p>This asset has changes that haven't been saved yet.</p>
+    <div class="row" style="justify-content:space-between;">
+      <button class="btn btn-ghost" id="btnNavCancel">Cancel</button>
+      <div style="display:flex; gap:10px;">
+        <button class="btn btn-danger" id="btnNavDiscard">Discard</button>
+        <button class="btn btn-primary" id="btnNavSaveContinue">Save &amp; continue</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="modal-backdrop" id="checkoutModal">
+  <div class="modal" style="max-width:440px;">
+    <h3>Check out asset</h3>
+    <p id="checkoutIntro">Issuing <span class="mono" id="checkoutTagLabel"></span>.</p>
+    <div class="field full" style="margin-bottom:12px;">
+      <label for="checkoutAssignTo">Issue to</label>
+      <select id="checkoutAssignTo"></select>
+    </div>
+    <div class="field full" style="margin-bottom:12px;">
+      <label for="checkoutReturnDate">Expected return date</label>
+      <input type="date" id="checkoutReturnDate">
+    </div>
+    <div class="field full">
+      <label>Signature <span style="font-weight:400;color:var(--ink-faint);">(optional)</span></label>
+      <div class="sig-pad-wrap">
+        <canvas id="checkoutSigCanvas" class="sig-pad" width="380" height="140"></canvas>
+        <button type="button" class="btn btn-ghost sig-clear" id="btnClearSig">Clear</button>
+      </div>
+    </div>
+    <div class="row" style="margin-top:16px; justify-content:space-between;">
+      <button class="btn" id="btnCancelCheckout">Cancel</button>
+      <button class="btn btn-primary" id="btnConfirmCheckout">Check out &amp; save</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal-backdrop" id="checkinModal">
+  <div class="modal" style="max-width:420px;">
+    <h3>Check in asset</h3>
+    <p id="checkinIntro">Returning <span class="mono" id="checkinTagLabel"></span>.</p>
+    <div class="field full" style="margin-bottom:12px;">
+      <label for="checkinReturnDate">Return date</label>
+      <input type="date" id="checkinReturnDate">
+    </div>
+    <div class="field full" style="margin-bottom:12px;">
+      <label for="checkinCondition">Return condition</label>
+      <select id="checkinCondition">
+        <option value="Good">Good</option>
+        <option value="Fair">Fair</option>
+        <option value="Damaged">Damaged</option>
+        <option value="Lost">Lost</option>
+      </select>
+    </div>
+    <div class="field full">
+      <label for="checkinStatus">Set status to</label>
+      <select id="checkinStatus">
+        <option value="In Stock">In stock</option>
+        <option value="In Storage">In storage</option>
+        <option value="Under Repair">Under repair</option>
+        <option value="Retired">Retired</option>
+      </select>
+    </div>
+    <div class="row" style="margin-top:16px; justify-content:space-between;">
+      <button class="btn" id="btnCancelCheckin">Cancel</button>
+      <button class="btn btn-primary" id="btnConfirmCheckin">Check in &amp; save</button>
+    </div>
+  </div>
+</div>
+
 <div class="modal-backdrop" id="listModal">
   <div class="modal" style="max-width:440px;">
     <h3 id="listModalTitle">Manage list</h3>
@@ -721,6 +836,8 @@
     </div>
     <div class="view-photos" id="viewPhotos"></div>
     <div class="view-grid" id="viewGrid"></div>
+    <h4 style="margin:18px 0 4px; font-size:12.5px; text-transform:uppercase; letter-spacing:0.06em; color:var(--ink-soft);">History</h4>
+    <div class="history-list" id="viewHistory"></div>
     <div class="row" style="margin-top:18px;">
       <button class="btn" id="btnViewEdit">Edit</button>
       <button class="btn" id="btnCloseView">Close</button>
@@ -781,7 +898,7 @@
   let html5QrCode = null;
   let dataReady = false;
   let formPhotos = []; // {id, dataUrl, dateTaken} for the asset currently in the form
-  let cfg = { get:'', save:'', del:'', uploadPhoto:'', getPhotos:'', getStaff:'', deletePhoto:'' }; // flow URLs; empty = local-only mode
+  let cfg = { get:'', save:'', del:'', uploadPhoto:'', getPhotos:'', getStaff:'', deletePhoto:'', addHistory:'', getHistory:'' }; // flow URLs; empty = local-only mode
 
   const $ = (id) => document.getElementById(id);
   const grid = $('invGrid');
@@ -867,13 +984,13 @@
 
     if(stored && stored.disconnected){
       cfg.get = ''; cfg.save = ''; cfg.del = '';
-      cfg.uploadPhoto = stored.uploadPhoto || ''; cfg.getPhotos = stored.getPhotos || ''; cfg.getStaff = stored.getStaff || ''; cfg.deletePhoto = stored.deletePhoto || '';
+      cfg.uploadPhoto = stored.uploadPhoto || ''; cfg.getPhotos = stored.getPhotos || ''; cfg.getStaff = stored.getStaff || ''; cfg.deletePhoto = stored.deletePhoto || ''; cfg.addHistory = stored.addHistory || ''; cfg.getHistory = stored.getHistory || '';
     }else if(stored && (stored.get || stored.save || stored.del)){
       cfg.get = stored.get || ''; cfg.save = stored.save || ''; cfg.del = stored.del || '';
-      cfg.uploadPhoto = stored.uploadPhoto || ''; cfg.getPhotos = stored.getPhotos || ''; cfg.getStaff = stored.getStaff || ''; cfg.deletePhoto = stored.deletePhoto || '';
+      cfg.uploadPhoto = stored.uploadPhoto || ''; cfg.getPhotos = stored.getPhotos || ''; cfg.getStaff = stored.getStaff || ''; cfg.deletePhoto = stored.deletePhoto || ''; cfg.addHistory = stored.addHistory || ''; cfg.getHistory = stored.getHistory || '';
     }else{
       cfg.get = DEFAULT_FLOWS.get; cfg.save = DEFAULT_FLOWS.save; cfg.del = DEFAULT_FLOWS.del;
-      cfg.uploadPhoto = DEFAULT_FLOWS.uploadPhoto; cfg.getPhotos = DEFAULT_FLOWS.getPhotos; cfg.getStaff = DEFAULT_FLOWS.getStaff; cfg.deletePhoto = DEFAULT_FLOWS.deletePhoto;
+      cfg.uploadPhoto = DEFAULT_FLOWS.uploadPhoto; cfg.getPhotos = DEFAULT_FLOWS.getPhotos; cfg.getStaff = DEFAULT_FLOWS.getStaff; cfg.deletePhoto = DEFAULT_FLOWS.deletePhoto; cfg.addHistory = DEFAULT_FLOWS.addHistory; cfg.getHistory = DEFAULT_FLOWS.getHistory;
       try{ await storage.set('flow-config', JSON.stringify(cfg), true); }catch(e){}
     }
 
@@ -884,6 +1001,8 @@
     $('cfgGetPhotos').value = cfg.getPhotos;
     $('cfgGetStaff').value = cfg.getStaff;
     $('cfgDeletePhoto').value = cfg.deletePhoto;
+    $('cfgAddHistory').value = cfg.addHistory;
+    $('cfgGetHistory').value = cfg.getHistory;
     setConnBadge(isConnected() ? 'online' : 'local');
   }
 
@@ -895,9 +1014,11 @@
     cfg.getPhotos = $('cfgGetPhotos').value.trim();
     cfg.getStaff = $('cfgGetStaff').value.trim();
     cfg.deletePhoto = $('cfgDeletePhoto').value.trim();
+    cfg.addHistory = $('cfgAddHistory').value.trim();
+    cfg.getHistory = $('cfgGetHistory').value.trim();
     const payload = isConnected()
-      ? { get:cfg.get, save:cfg.save, del:cfg.del, uploadPhoto:cfg.uploadPhoto, getPhotos:cfg.getPhotos, getStaff:cfg.getStaff, deletePhoto:cfg.deletePhoto }
-      : { get:'', save:'', del:'', uploadPhoto:cfg.uploadPhoto, getPhotos:cfg.getPhotos, getStaff:cfg.getStaff, deletePhoto:cfg.deletePhoto, disconnected:true };
+      ? { get:cfg.get, save:cfg.save, del:cfg.del, uploadPhoto:cfg.uploadPhoto, getPhotos:cfg.getPhotos, getStaff:cfg.getStaff, deletePhoto:cfg.deletePhoto, addHistory:cfg.addHistory, getHistory:cfg.getHistory }
+      : { get:'', save:'', del:'', uploadPhoto:cfg.uploadPhoto, getPhotos:cfg.getPhotos, getStaff:cfg.getStaff, deletePhoto:cfg.deletePhoto, addHistory:cfg.addHistory, getHistory:cfg.getHistory, disconnected:true };
     try{
       await storage.set('flow-config', JSON.stringify(payload), true);
     }catch(e){
@@ -956,8 +1077,8 @@
 
   // The "Assigned to" dropdown combines Departments (baked-in list) and Staff
   // (pulled live from Microsoft 365) as two groups in one select.
-  function populateAssignedSelect(keepValue){
-    const sel = $('fDepartment');
+  function populateAssignedSelect(keepValue, selId){
+    const sel = $(selId || 'fDepartment');
     if(!sel) return;
     const current = keepValue != null ? keepValue : sel.value;
     let html = '<option value="">— none —</option>';
@@ -1103,6 +1224,18 @@
   });
   $('fCategory').addEventListener('change', updateDeviceTypeVisibility);
 
+  // if a stored status doesn't match the fixed dropdown (legacy data, or a
+  // status set before this list existed), add it so it's never silently hidden
+  function ensureStatusOption(status){
+    if(!status) return;
+    const sel = $('fStatus');
+    if(![...sel.options].some(o=>o.value===status)){
+      const opt = document.createElement('option');
+      opt.value = status; opt.textContent = status + ' (not in list)';
+      sel.insertBefore(opt, sel.firstChild);
+    }
+  }
+
   // build the query string of asset fields for the Save flow
   function assetQuery(rec){
     const p = new URLSearchParams();
@@ -1121,6 +1254,10 @@
     p.set('leaseEndDate', rec.leaseEndDate || '');
     p.set('purchaseDate', rec.purchaseDate || '');
     p.set('notes', rec.notes || '');
+    p.set('dateIssued', rec.dateIssued || '');
+    p.set('expectedReturnDate', rec.expectedReturnDate || '');
+    p.set('returnDate', rec.returnDate || '');
+    p.set('returnCondition', rec.returnCondition || '');
     return p.toString();
   }
 
@@ -1142,6 +1279,10 @@
       leaseEndDate: a.leaseEndDate || '',
       purchaseDate: a.purchaseDate || '',
       notes: a.notes || '',
+      dateIssued: a.dateIssued || '',
+      expectedReturnDate: a.expectedReturnDate || '',
+      returnDate: a.returnDate || '',
+      returnCondition: a.returnCondition || '',
       dateAdded: a.dateAdded || '',
       dateUpdated: a.dateUpdated || '',
       photoCount: 0
@@ -1273,6 +1414,7 @@
         else if(op.op === 'delete') await pushDelete(op.id);
         else if(op.op === 'photo') await syncOnePhoto(op);
         else if(op.op === 'photodelete') await pushPhotoDelete(op.tagId, op.filename);
+        else if(op.op === 'history') await syncOneHistoryEntry(op);
         outbox = outbox.filter(o=>o !== op); // succeeded — remove
         await saveOutbox();
       }catch(e){
@@ -1471,6 +1613,7 @@
             await saveOutbox();
             sync('after photo delete');
           }
+          if(tagId) await logHistoryEvent(tagId, 'Photo Removed', 'Removed a ' + (photo.label||'photo').toLowerCase() + ' photo.');
         }
       });
     });
@@ -1575,6 +1718,157 @@
   }
 
   // merge remote photos into local cache for an asset (dedupe by remoteName)
+  // ---------- asset history / audit trail ----------
+  function historyKey(tagId){
+    return 'history:' + String(tagId).replace(/[^A-Za-z0-9_-]/g, '_');
+  }
+  async function loadHistoryFor(tagId){
+    if(!tagId) return [];
+    try{
+      const res = await storage.get(historyKey(tagId), true);
+      return res && res.value ? JSON.parse(res.value) : [];
+    }catch(e){ return []; }
+  }
+  async function saveHistoryFor(tagId, entries){
+    if(!tagId) return;
+    try{ await storage.set(historyKey(tagId), JSON.stringify(entries), true); }
+    catch(e){ /* non-fatal — history is best-effort */ }
+  }
+
+  // record one history entry locally, and queue it for upload if history sync is set up
+  async function logHistoryEvent(tagId, eventType, detail, fieldName, oldValue, newValue){
+    if(!tagId) return;
+    const entry = {
+      id: 'h' + Date.now() + Math.random().toString(36).slice(2,7),
+      eventType: eventType || 'Edited',
+      detail: detail || '',
+      fieldName: fieldName || '',
+      oldValue: oldValue == null ? '' : String(oldValue),
+      newValue: newValue == null ? '' : String(newValue),
+      timestamp: new Date().toISOString(),
+      synced: false
+    };
+    const entries = await loadHistoryFor(tagId);
+    entries.push(entry);
+    await saveHistoryFor(tagId, entries);
+    if(isConnected() && cfg.addHistory){
+      outbox.push({ op:'history', tagId: tagId, entryId: entry.id, ts: Date.now() });
+      await saveOutbox();
+    }
+  }
+
+  // diff the previous record against the new one and log sensible, readable
+  // history entries — one clear entry for status/location/assignment changes,
+  // a generic "Edited" catch-all for everything else, "Created" for new assets.
+  // If a check-out/check-in flow has already queued its own friendly entry
+  // (pendingHistoryOverride), skip the generic diffing entirely.
+  let pendingHistoryOverride = null;
+  let pendingFieldOverrides = null; // used by Check-out/Check-in to set dateIssued etc. on next save
+  async function recordHistoryDiffs(prevRecord, record, wasExisting){
+    if(pendingHistoryOverride){
+      const ov = pendingHistoryOverride;
+      pendingHistoryOverride = null;
+      await logHistoryEvent(record.id, ov.eventType, ov.detail, ov.fieldName||'', ov.oldValue||'', ov.newValue||'');
+      return;
+    }
+    if(!wasExisting){
+      await logHistoryEvent(record.id, 'Created', 'Asset added to the ledger.');
+      return;
+    }
+    const dash = (v)=> (v==null || v==='') ? '—' : v;
+    if(prevRecord.status !== record.status){
+      await logHistoryEvent(record.id, 'Status Change',
+        'Status changed from "' + dash(prevRecord.status) + '" to "' + dash(record.status) + '".',
+        'status', prevRecord.status, record.status);
+    }
+    if(prevRecord.location !== record.location){
+      await logHistoryEvent(record.id, 'Location Change',
+        'Location changed from "' + dash(prevRecord.location) + '" to "' + dash(record.location) + '".',
+        'location', prevRecord.location, record.location);
+    }
+    if(prevRecord.assignedTo !== record.assignedTo){
+      await logHistoryEvent(record.id, 'Assignment Change',
+        'Assigned to changed from "' + dash(prevRecord.assignedTo) + '" to "' + dash(record.assignedTo) + '".',
+        'assignedTo', prevRecord.assignedTo, record.assignedTo);
+    }
+    const otherFields = ['name','category','deviceType','serialNumber','purchaseDate','value','warrantyProvider','warrantyExpiry','isLeased','leaseEndDate','notes'];
+    const changedOthers = otherFields.filter(k => String(prevRecord[k] ?? '') !== String(record[k] ?? ''));
+    if(changedOthers.length){
+      await logHistoryEvent(record.id, 'Edited', 'Updated: ' + changedOthers.join(', ') + '.');
+    }
+  }
+
+  // ---------- history network calls ----------
+  async function pushHistoryEntry(tagId, entry){
+    const body = JSON.stringify({
+      tagId: tagId, eventType: entry.eventType, detail: entry.detail,
+      fieldName: entry.fieldName, oldValue: entry.oldValue, newValue: entry.newValue,
+      timestamp: entry.timestamp
+    });
+    let res;
+    try{
+      res = await fetch(cfg.addHistory, { method:'POST', body: body });
+    }catch(e){
+      logEvent('error', 'History upload failed for "' + tagId + '": ' + (e.message||e), 'Usually offline or a CORS issue on the Add History flow.');
+      const err = new Error(e.message||'network'); err.network = true; throw err;
+    }
+    if(!res.ok){
+      logEvent('error', 'Add History flow returned HTTP ' + res.status + ' for "' + tagId + '".', '');
+      throw new Error('HTTP ' + res.status);
+    }
+    let data = null;
+    try{ data = await res.json(); }catch(e){ /* fine if it didn't return one */ }
+    return (data && data.id != null) ? data.id : null;
+  }
+
+  async function syncOneHistoryEntry(op){
+    const entries = await loadHistoryFor(op.tagId);
+    const entry = entries.find(e=>e.id === op.entryId);
+    if(!entry) return; // removed locally before it uploaded — nothing to do
+    const spId = await pushHistoryEntry(op.tagId, entry); // throws (with .network flag) on failure
+    entry.synced = true;
+    if(spId != null) entry.spId = spId;
+    await saveHistoryFor(op.tagId, entries);
+  }
+
+  async function fetchRemoteHistory(tagId){
+    if(!cfg.getHistory || !tagId) return [];
+    const url = cfg.getHistory + '&id=' + encodeURIComponent(tagId);
+    const res = await fetch(url, { method:'POST' });
+    if(!res.ok) throw new Error('HTTP ' + res.status);
+    const data = await res.json();
+    if(!Array.isArray(data)) return [];
+    return data.map(x=>({
+      id: 'sp' + x.id,
+      spId: x.id,
+      eventType: x.eventType || '',
+      detail: x.detail || '',
+      fieldName: x.fieldName || '',
+      oldValue: x.oldValue || '',
+      newValue: x.newValue || '',
+      timestamp: x.timestamp || '',
+      synced: true
+    }));
+  }
+
+  // pull the authoritative list from SharePoint, keeping any not-yet-uploaded
+  // local entries (deduping already-uploaded ones by their SharePoint item id)
+  async function mergeRemoteHistory(tagId){
+    if(!cfg.getHistory || !tagId) return null;
+    try{
+      const remote = await fetchRemoteHistory(tagId);
+      let local = await loadHistoryFor(tagId);
+      const haveSpIds = new Set(local.map(e=>e.spId).filter(x=>x!=null));
+      remote.forEach(r=>{ if(!haveSpIds.has(r.spId)) local.push(r); });
+      local.sort((a,b)=> (b.timestamp||'').localeCompare(a.timestamp||''));
+      await saveHistoryFor(tagId, local);
+      return local;
+    }catch(e){
+      logEvent('error', 'Could not fetch history for "' + tagId + '": ' + (e.message||e), '');
+      return null;
+    }
+  }
+
   async function mergeRemotePhotos(tagId){
     if(!hasPhotoSync()) return null;
     try{
@@ -1594,9 +1888,12 @@
       if(removed){
         logEvent('info', 'Removed ' + removed + ' photo' + (removed===1?'':'s') + ' for "' + tagId + '" deleted on another device.', '');
       }
-      // if this asset is currently open in the form, refresh the strip
+      // if this asset is currently open in the form, refresh the strip —
+      // and treat this as the new baseline so it isn't mistaken for an
+      // unsaved change by the Next/Previous dirty-check
       if($('fTagId').value.trim() === tagId){
         formPhotos = local;
+        formLoadedPhotoIds = local.map(p=>p.id).slice().sort();
         renderPhotoStrip();
       }
       return local;
@@ -1892,6 +2189,35 @@
   $('btnClearForm').addEventListener('click', ()=>{ clearFormFields(true); hideFormBanner(); });
   $('btnCancelEdit').addEventListener('click', ()=>{ clearFormFields(true); hideFormBanner(); });
 
+  // ---------- unsaved-changes tracking ----------
+  let formLoadedSnapshot = '';
+  let formLoadedPhotoIds = [];
+  function captureFormSnapshot(){
+    return JSON.stringify({
+      name: $('fName').value.trim(),
+      category: $('fCategory').value.trim(),
+      deviceType: $('fDeviceType').value.trim(),
+      status: $('fStatus').value,
+      serial: $('fSerial').value.trim(),
+      location: $('fLocation').value.trim(),
+      department: $('fDepartment').value.trim(),
+      purchaseDate: $('fPurchaseDate').value,
+      value: $('fValue').value,
+      warrantyProvider: $('fWarrantyProvider').value.trim(),
+      warrantyExpiry: $('fWarrantyExpiry').value,
+      leased: $('fLeased').checked,
+      leaseEnd: $('fLeaseEnd').value,
+      notes: $('fNotes').value.trim()
+    });
+  }
+  function isFormDirty(){
+    if(!editingId) return false; // only matters mid-edit — that's the only time Next/Previous shows
+    if(captureFormSnapshot() !== formLoadedSnapshot) return true;
+    const currentPhotoIds = formPhotos.map(p=>p.id).slice().sort().join(',');
+    if(currentPhotoIds !== formLoadedPhotoIds.join(',')) return true;
+    return false;
+  }
+
   function clearFormFields(clearId){
     if(clearId) $('fTagId').value = '';
     $('fName').value='';
@@ -1917,6 +2243,10 @@
     $('btnCancelEdit').style.display='none';
     $('btnSaveAsset').textContent='Save asset';
     $('editNav').style.display='none';
+    editNavOrder = [];
+    formLoadedSnapshot = captureFormSnapshot();
+    formLoadedPhotoIds = [];
+    updateCheckActions();
   }
 
   function loadAssetIntoForm(a){
@@ -1927,6 +2257,7 @@
     updateDeviceTypeVisibility();
     ensureOption('deviceType', a.deviceType);
     populateSelect('deviceType', a.deviceType || '');
+    ensureStatusOption(a.status);
     $('fStatus').value = a.status || 'In Use';
     ensureOption('location', a.location);
     populateSelect('location', a.location || '');
@@ -1944,59 +2275,231 @@
     editingId = a.id;
     $('btnCancelEdit').style.display='inline-flex';
     $('btnSaveAsset').textContent='Update asset';
+    formLoadedSnapshot = captureFormSnapshot();
     updateEditNav();
+    updateCheckActions();
     updateCountdownHints();
     formPhotos = [];
+    formLoadedPhotoIds = [];
     renderPhotoStrip();
     loadPhotosFor(a.id).then(photos=>{
       formPhotos = photos;
+      formLoadedPhotoIds = photos.map(p=>p.id).slice().sort();
       renderPhotoStrip();
       mergeRemotePhotos(a.id); // pull any photos taken on other devices
     });
   }
 
-  // Previous/Next step through the same filtered/sorted list Inventory is showing,
-  // so navigation follows whatever search or filter was active when you opened this asset.
+  // Previous/Next step through a snapshot of the filtered/sorted Inventory list,
+  // taken when you first land on this asset — so saving (which bumps its
+  // position in the "recently updated" sort) doesn't reshuffle your walk order
+  // mid-review.
+  let editNavOrder = [];
+  let pendingNavStep = 0;
+
   function updateEditNav(){
     const nav = $('editNav');
     if(!editingId){ nav.style.display = 'none'; return; }
-    const list = getFilteredSortedAssets();
-    const idx = list.findIndex(a=>a.id === editingId);
+    if(!editNavOrder.includes(editingId)){
+      editNavOrder = getFilteredSortedAssets().map(a=>a.id);
+    }
+    const idx = editNavOrder.indexOf(editingId);
     if(idx === -1){ nav.style.display = 'none'; return; }
     nav.style.display = 'flex';
-    $('editNavPos').textContent = (idx+1) + ' of ' + list.length;
+    $('editNavPos').textContent = (idx+1) + ' of ' + editNavOrder.length;
     $('btnPrevAsset').disabled = (idx <= 0);
-    $('btnNextAsset').disabled = (idx >= list.length - 1);
+    $('btnNextAsset').disabled = (idx >= editNavOrder.length - 1);
+  }
+
+  function performNav(step){
+    const idx = editNavOrder.indexOf(editingId);
+    if(idx === -1) return;
+    const nextId = editNavOrder[idx + step];
+    if(!nextId){ showToast(step > 0 ? 'This is the last asset in the list.' : 'This is the first asset in the list.'); return; }
+    const nextAsset = assets.find(a=>a.id === nextId);
+    if(!nextAsset){ editNavOrder = editNavOrder.filter(id=>id!==nextId); return performNav(0); }
+    loadAssetIntoForm(nextAsset);
+    hideFormBanner();
   }
 
   function goToRelativeAsset(step){
-    const list = getFilteredSortedAssets();
-    const idx = list.findIndex(a=>a.id === editingId);
-    if(idx === -1) return;
-    const next = list[idx + step];
-    if(!next){ showToast(step > 0 ? 'This is the last asset in the list.' : 'This is the first asset in the list.'); return; }
-    loadAssetIntoForm(next);
-    hideFormBanner();
+    if(isFormDirty()){
+      pendingNavStep = step;
+      $('navConfirmModal').classList.add('show');
+      return;
+    }
+    performNav(step);
   }
   $('btnPrevAsset').addEventListener('click', ()=> goToRelativeAsset(-1));
   $('btnNextAsset').addEventListener('click', ()=> goToRelativeAsset(1));
 
-  $('btnSaveAsset').addEventListener('click', async ()=>{
+  $('btnNavCancel').addEventListener('click', ()=> $('navConfirmModal').classList.remove('show'));
+  $('btnNavDiscard').addEventListener('click', ()=>{
+    $('navConfirmModal').classList.remove('show');
+    performNav(pendingNavStep);
+  });
+  $('btnNavSaveContinue').addEventListener('click', async ()=>{
+    $('navConfirmModal').classList.remove('show');
+    const ok = await saveCurrentAsset();
+    if(ok) performNav(pendingNavStep);
+  });
+
+  // ---------- check-out / check-in ----------
+  function updateCheckActions(){
+    const wrap = $('checkActions');
+    if(!editingId){ wrap.style.display = 'none'; return; }
+    wrap.style.display = 'flex';
+    const status = $('fStatus').value;
+    $('btnCheckOut').style.display = (status === 'Issued') ? 'none' : 'inline-flex';
+    $('btnCheckIn').style.display = (status === 'Issued') ? 'inline-flex' : 'none';
+  }
+  $('fStatus').addEventListener('change', updateCheckActions);
+
+  $('btnCheckOut').addEventListener('click', ()=>{
+    $('checkoutTagLabel').textContent = $('fTagId').value.trim();
+    populateAssignedSelect($('fDepartment').value, 'checkoutAssignTo');
+    $('checkoutReturnDate').value = '';
+    clearSigPad();
+    $('checkoutModal').classList.add('show');
+  });
+  $('btnCancelCheckout').addEventListener('click', ()=> $('checkoutModal').classList.remove('show'));
+
+  $('btnCheckIn').addEventListener('click', ()=>{
+    $('checkinTagLabel').textContent = $('fTagId').value.trim();
+    $('checkinReturnDate').value = new Date().toISOString().slice(0,10);
+    $('checkinCondition').value = 'Good';
+    $('checkinStatus').value = 'In Stock';
+    $('checkinModal').classList.add('show');
+  });
+  $('btnCancelCheckin').addEventListener('click', ()=> $('checkinModal').classList.remove('show'));
+
+  $('btnConfirmCheckout').addEventListener('click', async ()=>{
+    const assignTo = $('checkoutAssignTo').value.trim();
+    const dueDate = $('checkoutReturnDate').value;
+    if(!assignTo){ showToast('Choose who this is being issued to.'); return; }
+    const today = new Date().toISOString().slice(0,10);
+
+    $('fDepartment').value = assignTo; // matching option was just populated into this same list
+    ensureOption('department', assignTo);
+    populateSelect('department', assignTo);
+    $('fStatus').value = 'Issued';
+    updateCheckActions();
+
+    const sigDataUrl = getSigPadDataUrl();
+    if(sigDataUrl){
+      formPhotos.push({
+        id: 'p' + Date.now() + Math.random().toString(36).slice(2,7),
+        dataUrl: sigDataUrl,
+        dateTaken: new Date().toISOString(),
+        label: 'Signature',
+        synced: false
+      });
+      renderPhotoStrip();
+    }
+
+    pendingFieldOverrides = { dateIssued: today, expectedReturnDate: dueDate, returnDate: '', returnCondition: '' };
+    pendingHistoryOverride = {
+      eventType: 'Checked Out',
+      detail: 'Issued to ' + assignTo + (dueDate ? ', due back ' + dueDate + '.' : '.'),
+      fieldName: 'assignedTo', oldValue: '', newValue: assignTo
+    };
+    $('checkoutModal').classList.remove('show');
+    await saveCurrentAsset();
+  });
+
+  $('btnConfirmCheckin').addEventListener('click', async ()=>{
+    const returnDate = $('checkinReturnDate').value || new Date().toISOString().slice(0,10);
+    const condition = $('checkinCondition').value;
+    const newStatus = $('checkinStatus').value;
+    const previousHolder = $('fDepartment').value.trim();
+
+    $('fStatus').value = newStatus;
+    $('fDepartment').value = '';
+    populateSelect('department', '');
+    updateCheckActions();
+
+    pendingFieldOverrides = { returnDate: returnDate, returnCondition: condition };
+    pendingHistoryOverride = {
+      eventType: 'Checked In',
+      detail: 'Checked in' + (previousHolder ? ' from ' + previousHolder : '') + ', condition: ' + condition + '.',
+      fieldName: 'status', oldValue: 'Issued', newValue: newStatus
+    };
+    $('checkinModal').classList.remove('show');
+    await saveCurrentAsset();
+  });
+
+  // ---------- signature pad ----------
+  let sigDrawing = false, sigHasStrokes = false, sigLastPt = null;
+  function sigCanvasCtx(){ return $('checkoutSigCanvas').getContext('2d'); }
+  function clearSigPad(){
+    const c = $('checkoutSigCanvas');
+    const ctx = c.getContext('2d');
+    ctx.clearRect(0,0,c.width,c.height);
+    sigHasStrokes = false;
+  }
+  function sigPointFromEvent(e){
+    const c = $('checkoutSigCanvas');
+    const rect = c.getBoundingClientRect();
+    const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+    const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+    return {
+      x: (clientX - rect.left) * (c.width / rect.width),
+      y: (clientY - rect.top) * (c.height / rect.height)
+    };
+  }
+  function sigStart(e){
+    e.preventDefault();
+    sigDrawing = true;
+    sigLastPt = sigPointFromEvent(e);
+  }
+  function sigMove(e){
+    if(!sigDrawing) return;
+    e.preventDefault();
+    const pt = sigPointFromEvent(e);
+    const ctx = sigCanvasCtx();
+    ctx.strokeStyle = '#1E2226'; ctx.lineWidth = 2; ctx.lineCap = 'round';
+    ctx.beginPath(); ctx.moveTo(sigLastPt.x, sigLastPt.y); ctx.lineTo(pt.x, pt.y); ctx.stroke();
+    sigLastPt = pt;
+    sigHasStrokes = true;
+  }
+  function sigEnd(){ sigDrawing = false; }
+  (function initSigPad(){
+    const c = $('checkoutSigCanvas');
+    if(!c) return;
+    c.addEventListener('mousedown', sigStart);
+    c.addEventListener('mousemove', sigMove);
+    window.addEventListener('mouseup', sigEnd);
+    c.addEventListener('touchstart', sigStart, { passive:false });
+    c.addEventListener('touchmove', sigMove, { passive:false });
+    c.addEventListener('touchend', sigEnd);
+  })();
+  $('btnClearSig').addEventListener('click', clearSigPad);
+  function getSigPadDataUrl(){
+    if(!sigHasStrokes) return null;
+    return $('checkoutSigCanvas').toDataURL('image/png');
+  }
+
+
+  // Named so Next/Previous can trigger a save (with the same validation and
+  // behaviour) before navigating away from an asset with unsaved changes.
+  async function saveCurrentAsset(){
     const id = $('fTagId').value.trim();
     if(!id){
       showToast('Enter or scan a tag ID first.');
       $('fTagId').focus();
-      return;
+      return false;
     }
     if(!$('fCategory').value.trim()){
       showToast('Category is required.');
       $('fCategory').focus();
-      return;
+      return false;
     }
     const name = $('fName').value.trim() || '(untitled asset)';
     const now = new Date().toISOString();
     const existingIdx = assets.findIndex(a=>a.id===id);
+    const prevRecord = existingIdx>-1 ? assets[existingIdx] : null;
     const isLeased = $('fLeased').checked;
+    const overrides = pendingFieldOverrides || {};
 
     const record = {
       id,
@@ -2016,16 +2519,31 @@
       notes: $('fNotes').value.trim(),
       photoCount: formPhotos.length,
       dateAdded: existingIdx>-1 ? assets[existingIdx].dateAdded : now,
-      dateUpdated: now
+      dateUpdated: now,
+      dateIssued: 'dateIssued' in overrides ? overrides.dateIssued : (prevRecord ? prevRecord.dateIssued : ''),
+      expectedReturnDate: 'expectedReturnDate' in overrides ? overrides.expectedReturnDate : (prevRecord ? prevRecord.expectedReturnDate : ''),
+      returnDate: 'returnDate' in overrides ? overrides.returnDate : (prevRecord ? prevRecord.returnDate : ''),
+      returnCondition: 'returnCondition' in overrides ? overrides.returnCondition : (prevRecord ? prevRecord.returnCondition : '')
     };
+    pendingFieldOverrides = null;
 
     const wasExisting = existingIdx > -1;
+    await recordHistoryDiffs(prevRecord, record, wasExisting);
+    const addedPhotoCount = formPhotos.filter(p => !formLoadedPhotoIds.includes(p.id)).length;
+    if(addedPhotoCount > 0){
+      await logHistoryEvent(record.id, 'Photo Added', addedPhotoCount + ' photo' + (addedPhotoCount===1?'':'s') + ' added.');
+    }
 
     if(isConnected()){
       await queueSave(record);          // updates assets + outbox + cache
       await savePhotosFor(id, formPhotos);
       if(hasPhotoSync()) await queuePhotoUploads(id, formPhotos);
-      clearFormFields(true);
+      if(wasExisting){
+        // stay in edit mode on this same asset so Next/Previous keeps working
+        loadAssetIntoForm(record);
+      }else{
+        clearFormFields(true);
+      }
       hideFormBanner();
       renderAll();
       showToast((wasExisting ? 'Updated "' : 'Added "') + name + '" — saving to SharePoint.');
@@ -2034,12 +2552,18 @@
       if(wasExisting) assets[existingIdx] = record; else assets.push(record);
       await persistLocal();
       await savePhotosFor(id, formPhotos);
-      clearFormFields(true);
+      if(wasExisting){
+        loadAssetIntoForm(record);
+      }else{
+        clearFormFields(true);
+      }
       hideFormBanner();
       renderAll();
       showToast(wasExisting ? 'Updated "' + name + '" (local).' : 'Added "' + name + '" (local).');
     }
-  });
+    return true;
+  }
+  $('btnSaveAsset').addEventListener('click', saveCurrentAsset);
 
   // watch manual typing of an existing ID too
   $('fTagId').addEventListener('change', ()=>{
@@ -2208,6 +2732,10 @@
       vgItem('Warranty provider', a.warrantyProvider),
       vgItem('Warranty', warranty, true),
       vgItem('Lease', lease, true),
+      vgItem('Date issued', a.dateIssued),
+      vgItem('Expected return', a.expectedReturnDate),
+      vgItem('Return date', a.returnDate),
+      vgItem('Return condition', a.returnCondition),
       vgItem('Notes', a.notes, true)
     ].join('');
 
@@ -2222,7 +2750,41 @@
       }
     });
 
+    // history: same pattern — local cache first, then reconcile with SharePoint
+    $('viewHistory').innerHTML = '<div class="history-empty">Loading history…</div>';
+    loadHistoryFor(a.id).then(async (entries)=>{
+      renderViewHistory(entries);
+      if(cfg.getHistory){
+        const merged = await mergeRemoteHistory(a.id);
+        if(merged) renderViewHistory(merged);
+      }
+    });
+
     $('viewModal').classList.add('show');
+  }
+
+  function historyDotClass(eventType){
+    if(eventType === 'Status Change' || eventType === 'Checked Out' || eventType === 'Checked In') return 'status';
+    if(eventType === 'Location Change') return 'location';
+    if(eventType === 'Assignment Change') return 'assignment';
+    if(eventType === 'Photo Added' || eventType === 'Photo Removed') return 'photo';
+    if(eventType === 'Created') return 'created';
+    return '';
+  }
+  function renderViewHistory(entries){
+    const box = $('viewHistory');
+    if(!entries || !entries.length){ box.innerHTML = '<div class="history-empty">No history recorded yet.</div>'; return; }
+    const sorted = entries.slice().sort((a,b)=> (b.timestamp||'').localeCompare(a.timestamp||''));
+    box.innerHTML = sorted.map(e=>{
+      const when = e.timestamp ? new Date(e.timestamp).toLocaleString('en-GB', { day:'2-digit', month:'short', year:'numeric', hour:'2-digit', minute:'2-digit' }) : '';
+      return '<div class="history-item">' +
+        '<div class="history-dot ' + historyDotClass(e.eventType) + '"></div>' +
+        '<div class="history-body">' +
+          '<div class="history-detail"><b>' + esc(e.eventType||'Edited') + '</b> — ' + esc(e.detail||'') + '</div>' +
+          '<div class="history-meta">' + esc(when) + (e.synced===false ? ' · pending upload' : '') + '</div>' +
+        '</div>' +
+      '</div>';
+    }).join('');
   }
   function renderViewPhotos(photos){
     const box = $('viewPhotos');
@@ -2704,7 +3266,7 @@
   // Accepts JSON ({"get":"…","save":"…","delete":"…"}) or a simple labelled text
   // file with one URL per line (e.g. "get https://…"). Lenient about formatting.
   function parseFlowUrls(text){
-    const out = { get:'', save:'', del:'', uploadPhoto:'', getPhotos:'', getStaff:'', deletePhoto:'' };
+    const out = { get:'', save:'', del:'', uploadPhoto:'', getPhotos:'', getStaff:'', deletePhoto:'', addHistory:'', getHistory:'' };
     try{
       const j = JSON.parse(text);
       if(j && typeof j === 'object'){
@@ -2715,6 +3277,8 @@
         out.getPhotos   = j.getPhotos   || j.getphotos   || j.GetPhotos   || '';
         out.getStaff    = j.getStaff    || j.getstaff    || j.GetStaff    || '';
         out.deletePhoto = j.deletePhoto || j.deletephoto || j.DeletePhoto || '';
+        out.addHistory  = j.addHistory  || j.addhistory  || j.AddHistory  || '';
+        out.getHistory  = j.getHistory  || j.gethistory  || j.GetHistory  || '';
         if(out.get || out.save || out.del) return out;
       }
     }catch(e){ /* not JSON — fall through to line parsing */ }
@@ -2723,7 +3287,9 @@
       if(!m) return;
       const url = m[0];
       const label = line.slice(0, m.index).toLowerCase();
-      if(/deletephoto|delete.photo|photodelete/.test(label)) out.deletePhoto = url;
+      if(/addhistory|add.history|historyadd/.test(label)) out.addHistory = url;
+      else if(/gethistory|get.history|historyget/.test(label)) out.getHistory = url;
+      else if(/deletephoto|delete.photo|photodelete/.test(label)) out.deletePhoto = url;
       else if(/getstaff|get.staff|staff/.test(label)) out.getStaff = url;
       else if(/uploadphoto|upload.photo|photoupload/.test(label)) out.uploadPhoto = url;
       else if(/getphotos|get.photos|photos/.test(label)) out.getPhotos = url;
@@ -2757,6 +3323,8 @@
     if(p.getPhotos) $('cfgGetPhotos').value = p.getPhotos;
     if(p.getStaff) $('cfgGetStaff').value = p.getStaff;
     if(p.deletePhoto) $('cfgDeletePhoto').value = p.deletePhoto;
+    if(p.addHistory) $('cfgAddHistory').value = p.addHistory;
+    if(p.getHistory) $('cfgGetHistory').value = p.getHistory;
     const missing = [];
     if(!p.get) missing.push('Get'); if(!p.save) missing.push('Save'); if(!p.del) missing.push('Delete');
     if(missing.length){
@@ -2775,9 +3343,9 @@
 
   $('btnExportUrls').addEventListener('click', ()=>{
     const g = $('cfgGet').value.trim(), s = $('cfgSave').value.trim(), d = $('cfgDelete').value.trim();
-    const up = $('cfgUploadPhoto').value.trim(), gp = $('cfgGetPhotos').value.trim(), gs = $('cfgGetStaff').value.trim(), dp = $('cfgDeletePhoto').value.trim();
+    const up = $('cfgUploadPhoto').value.trim(), gp = $('cfgGetPhotos').value.trim(), gs = $('cfgGetStaff').value.trim(), dp = $('cfgDeletePhoto').value.trim(), ah = $('cfgAddHistory').value.trim(), gh = $('cfgGetHistory').value.trim();
     if(!g && !s && !d){ showToast('No URLs to export yet.'); return; }
-    const text = 'get ' + g + '\nsave ' + s + '\ndelete ' + d + '\nuploadphoto ' + up + '\ngetphotos ' + gp + '\ngetstaff ' + gs + '\ndeletephoto ' + dp + '\n';
+    const text = 'get ' + g + '\nsave ' + s + '\ndelete ' + d + '\nuploadphoto ' + up + '\ngetphotos ' + gp + '\ngetstaff ' + gs + '\ndeletephoto ' + dp + '\naddhistory ' + ah + '\ngethistory ' + gh + '\n';
     const blob = new Blob([text], { type:'text/plain' });
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
