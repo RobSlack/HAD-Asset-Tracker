@@ -313,6 +313,44 @@
     padding:0; position:relative; overflow:hidden; box-shadow:var(--shadow);
     display:flex; flex-direction:column;
   }
+  .tag-card.selected{border-color:var(--accent); box-shadow:0 0 0 2px var(--accent-tint), var(--shadow);}
+  .tag-select{
+    position:absolute; top:14px; left:14px; width:18px; height:18px; z-index:2;
+    accent-color:var(--accent); cursor:pointer;
+  }
+  .bulk-bar{
+    display:none; align-items:center; justify-content:space-between; gap:10px; flex-wrap:wrap;
+    background:var(--ink); color:#fff; border-radius:8px; padding:10px 14px; margin-bottom:14px;
+  }
+  .bulk-bar.show{display:flex;}
+  .bulk-bar .bulk-count{font-family:'IBM Plex Mono'; font-size:12.5px;}
+  .bulk-bar .bulk-actions{display:flex; gap:8px; flex-wrap:wrap;}
+  .bulk-bar .btn{padding:6px 12px; font-size:12px;}
+  .stocktake-counts{
+    display:flex; gap:18px; flex-wrap:wrap; margin:10px 0 14px;
+    font-family:'IBM Plex Mono'; font-size:12.5px; color:var(--ink-soft);
+  }
+  .stocktake-counts b{color:var(--ink); font-size:15px;}
+  .stocktake-manual{margin-top:12px;}
+  .stocktake-manual input{
+    width:100%; border:1px solid var(--border); border-radius:7px; padding:9px 10px;
+    font-size:13.5px; background:var(--bg); color:var(--ink);
+  }
+  .stocktake-tabs{display:flex; gap:6px; margin-bottom:14px; border-bottom:1px solid var(--border); padding-bottom:10px;}
+  .stocktake-subtab{
+    border:1px solid var(--border); background:var(--surface); color:var(--ink-soft);
+    padding:6px 12px; border-radius:999px; font-size:12.5px; font-weight:600;
+  }
+  .stocktake-subtab.active{background:var(--ink); color:#fff; border-color:var(--ink);}
+  .stocktake-list{display:flex; flex-direction:column; gap:0; max-height:320px; overflow-y:auto;}
+  .stocktake-row{
+    display:flex; align-items:center; justify-content:space-between; gap:10px;
+    padding:9px 0; border-bottom:1px solid var(--border); font-size:13px;
+  }
+  .stocktake-row:last-child{border-bottom:none;}
+  .stocktake-row .st-id{font-family:'IBM Plex Mono'; font-weight:600;}
+  .stocktake-row .st-meta{color:var(--ink-faint); font-size:11.5px; margin-top:1px;}
+  .stocktake-empty{color:var(--ink-faint); font-size:13px; text-align:center; padding:20px 0;}
   .tag-card .punch{
     position:absolute; top:14px; right:14px; width:10px;height:10px;border-radius:50%;
     background:var(--bg); border:1px solid var(--border);
@@ -464,6 +502,7 @@
   <nav class="tabs">
     <button class="active" data-tab="scan">Scan &amp; Add</button>
     <button data-tab="inventory">Inventory</button>
+    <button data-tab="stocktake">Stocktake</button>
     <button data-tab="overview">Overview</button>
     <button data-tab="settings">Settings</button>
     <button data-tab="log">Log</button>
@@ -584,6 +623,7 @@
       <div class="form-actions" id="checkActions" style="display:none;">
         <button class="btn" id="btnCheckOut">Check out…</button>
         <button class="btn" id="btnCheckIn">Check in…</button>
+        <button class="btn btn-danger" id="btnRecordDisposal">Record disposal…</button>
       </div>
       <div class="form-actions">
         <button class="btn btn-primary" id="btnSaveAsset">Save asset</button>
@@ -599,22 +639,91 @@
       <select id="filterCategory"><option value="">All categories</option></select>
       <select id="filterStatus">
         <option value="">All statuses</option>
-        <option value="In Use">In use</option>
+        <option value="Ordered">Ordered</option>
+        <option value="Delivered">Delivered</option>
+        <option value="In Build">In build</option>
+        <option value="In Stock">In stock</option>
         <option value="In Storage">In storage</option>
+        <option value="In Use">In use</option>
+        <option value="Issued">Issued</option>
         <option value="Under Repair">Under repair</option>
-        <option value="Retired">Retired / disposed</option>
+        <option value="Returned">Returned</option>
+        <option value="Retired">Retired</option>
+        <option value="Disposed">Disposed</option>
       </select>
     </div>
     <div class="top-actions">
+      <button class="btn" id="btnSelectAllVisible">Select all shown</button>
       <button class="btn" id="btnDownloadTemplate">Download CSV template</button>
       <button class="btn" id="btnImportCsv">Import CSV</button>
       <button class="btn" id="btnExport">Export CSV</button>
+      <button class="btn" id="btnExportDisposal">Export disposal register</button>
       <input type="file" id="assetCsvInput" accept=".csv,text/csv" style="display:none">
+    </div>
+    <div class="bulk-bar" id="bulkBar">
+      <span class="bulk-count" id="bulkCount">0 selected</span>
+      <div class="bulk-actions">
+        <button class="btn" id="btnBulkLocation">Set location…</button>
+        <button class="btn" id="btnBulkStatus">Set status…</button>
+        <button class="btn" id="btnBulkAssign">Assign to…</button>
+        <button class="btn" id="btnBulkRetire">Retire</button>
+        <button class="btn" id="btnBulkExport">Export selected</button>
+        <button class="btn btn-ghost" id="btnBulkClear">Clear selection</button>
+      </div>
     </div>
     <div id="invGrid" class="inv-grid"></div>
     <div class="empty-state" id="invEmpty" style="display:none;">
       <div class="glyph">[ ]</div>
       <p>No assets match yet. Scan or add one to get started.</p>
+    </div>
+  </section>
+
+  <!-- STOCKTAKE -->
+  <section class="panel" id="panel-stocktake">
+    <div class="card scan-card" id="stocktakeSetup">
+      <h2>Start a stocktake</h2>
+      <p class="hint">Pick a location (and optionally a category), then scan your way around the room. Assets already recorded there get ticked off as you go.</p>
+      <div class="form-grid" style="margin-bottom:16px;">
+        <div class="field full">
+          <label for="stocktakeLocationSelect">Location <span>required</span></label>
+          <select id="stocktakeLocationSelect"></select>
+        </div>
+        <div class="field full">
+          <label for="stocktakeCategorySelect">Category <span style="font-weight:400;color:var(--ink-faint);">(optional)</span></label>
+          <select id="stocktakeCategorySelect"><option value="">All categories</option></select>
+        </div>
+      </div>
+      <button class="btn btn-primary" id="btnStartStocktake">Start stocktake</button>
+    </div>
+
+    <div id="stocktakeSession" style="display:none;">
+      <div class="card scan-card">
+        <div style="display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:10px; margin-bottom:6px;">
+          <h2 style="margin:0;">Stocktake: <span id="stocktakeLocationLabel"></span></h2>
+          <button class="btn btn-ghost" id="btnFinishStocktake">Finish &amp; report</button>
+        </div>
+        <div class="stocktake-counts" id="stocktakeCounts"></div>
+        <div id="stocktakeReader"></div>
+        <div class="scan-controls">
+          <button class="btn btn-primary" id="btnStocktakeScan">Start camera</button>
+          <button class="btn" id="btnStocktakeStopScan" style="display:none;">Stop camera</button>
+        </div>
+        <div class="scan-status" id="stocktakeScanStatus"></div>
+        <div class="stocktake-manual">
+          <input type="text" id="stocktakeManualInput" class="mono" placeholder="Or type a tag ID and press Enter">
+        </div>
+      </div>
+
+      <div class="card" style="padding:18px 20px; margin-top:14px;">
+        <div class="stocktake-tabs">
+          <button type="button" class="stocktake-subtab active" data-stlist="verified">✅ Verified</button>
+          <button type="button" class="stocktake-subtab" data-stlist="missing">⏳ Not yet found</button>
+          <button type="button" class="stocktake-subtab" data-stlist="unexpected">⚠️ Unexpected</button>
+        </div>
+        <div class="stocktake-list" id="stocktakeListVerified"></div>
+        <div class="stocktake-list" id="stocktakeListMissing" style="display:none;"></div>
+        <div class="stocktake-list" id="stocktakeListUnexpected" style="display:none;"></div>
+      </div>
     </div>
   </section>
 
@@ -808,6 +917,70 @@
   </div>
 </div>
 
+<div class="modal-backdrop" id="disposalModal">
+  <div class="modal" style="max-width:440px;">
+    <h3>Record disposal</h3>
+    <p>Disposing of <span class="mono" id="disposalTagLabel"></span>. This sets Status to <b>Disposed</b>.</p>
+    <div class="field full" style="margin-bottom:12px;">
+      <label for="disposalDateInput">Disposal date</label>
+      <input type="date" id="disposalDateInput">
+    </div>
+    <div class="field full" style="margin-bottom:12px;">
+      <label for="disposalMethodInput">Disposal method</label>
+      <select id="disposalMethodInput">
+        <option value="Recycled">Recycled</option>
+        <option value="Resold">Resold</option>
+        <option value="Donated">Donated</option>
+        <option value="WEEE Collection">WEEE collection</option>
+        <option value="Destroyed">Destroyed</option>
+        <option value="Other">Other</option>
+      </select>
+    </div>
+    <div class="field full" style="margin-bottom:12px;">
+      <label for="disposalCertInput">Certificate number</label>
+      <input type="text" id="disposalCertInput" placeholder="e.g. cert reference">
+    </div>
+    <div class="field full" style="margin-bottom:12px;">
+      <label for="disposalWeeeInput">WEEE reference</label>
+      <input type="text" id="disposalWeeeInput" placeholder="e.g. WEEE reference number">
+    </div>
+    <div class="field full">
+      <label for="disposalNotesInput">Notes</label>
+      <textarea id="disposalNotesInput" placeholder="Anything worth recording"></textarea>
+    </div>
+    <div class="row" style="margin-top:16px; justify-content:space-between;">
+      <button class="btn" id="btnCancelDisposal">Cancel</button>
+      <button class="btn btn-danger" id="btnConfirmDisposal">Record disposal &amp; save</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal-backdrop" id="bulkValueModal">
+  <div class="modal" style="max-width:420px;">
+    <h3 id="bulkValueTitle">Bulk update</h3>
+    <p id="bulkValueIntro"></p>
+    <div class="field full">
+      <label for="bulkValueSelect" id="bulkValueLabel">Value</label>
+      <select id="bulkValueSelect"></select>
+    </div>
+    <div class="row" style="margin-top:16px; justify-content:space-between;">
+      <button class="btn" id="btnCancelBulkValue">Cancel</button>
+      <button class="btn btn-primary" id="btnConfirmBulkValue">Apply to selected</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal-backdrop" id="bulkConfirmModal">
+  <div class="modal">
+    <h3 id="bulkConfirmTitle">Apply to selected assets?</h3>
+    <p id="bulkConfirmText"></p>
+    <div class="row">
+      <button class="btn" id="btnCancelBulkConfirm">Cancel</button>
+      <button class="btn btn-danger" id="btnConfirmBulkConfirm">Confirm</button>
+    </div>
+  </div>
+</div>
+
 <div class="modal-backdrop" id="listModal">
   <div class="modal" style="max-width:440px;">
     <h3 id="listModalTitle">Manage list</h3>
@@ -895,6 +1068,7 @@
   let assets = [];
   let editingId = null;
   let pendingDeleteId = null;
+  let selectedAssetIds = new Set(); // bulk operations
   let html5QrCode = null;
   let dataReady = false;
   let formPhotos = []; // {id, dataUrl, dateTaken} for the asset currently in the form
@@ -1258,6 +1432,11 @@
     p.set('expectedReturnDate', rec.expectedReturnDate || '');
     p.set('returnDate', rec.returnDate || '');
     p.set('returnCondition', rec.returnCondition || '');
+    p.set('disposalDate', rec.disposalDate || '');
+    p.set('disposalMethod', rec.disposalMethod || '');
+    p.set('certificateNumber', rec.certificateNumber || '');
+    p.set('weeeReference', rec.weeeReference || '');
+    p.set('disposalNotes', rec.disposalNotes || '');
     return p.toString();
   }
 
@@ -1283,6 +1462,11 @@
       expectedReturnDate: a.expectedReturnDate || '',
       returnDate: a.returnDate || '',
       returnCondition: a.returnCondition || '',
+      disposalDate: a.disposalDate || '',
+      disposalMethod: a.disposalMethod || '',
+      certificateNumber: a.certificateNumber || '',
+      weeeReference: a.weeeReference || '',
+      disposalNotes: a.disposalNotes || '',
       dateAdded: a.dateAdded || '',
       dateUpdated: a.dateUpdated || '',
       photoCount: 0
@@ -1942,11 +2126,210 @@
       btn.classList.add('active');
       $('panel-'+btn.dataset.tab).classList.add('active');
       if(btn.dataset.tab !== 'scan') stopScanner();
+      if(btn.dataset.tab !== 'stocktake') stopStocktakeScanner();
       if(btn.dataset.tab === 'overview') renderOverview();
       if(btn.dataset.tab === 'log') renderLog();
+      if(btn.dataset.tab === 'stocktake' && !stocktakeActive) populateStocktakeSetup();
       if(btn.dataset.tab === 'inventory' || btn.dataset.tab === 'overview') maybeRefreshOnTabOpen();
     });
   });
+
+  // ---------- stocktake / verification mode ----------
+  let stocktakeActive = false;
+  let stocktakeLocation = '';
+  let stocktakeCategory = '';
+  let stocktakeExpected = [];       // assets expected at this location/category
+  let stocktakeVerified = [];       // {id, name, timestamp}
+  let stocktakeUnexpected = [];     // {id, name, reason, timestamp}
+  let stocktakeQrCode = null;
+  let stocktakeScanStarting = false;
+
+  function populateStocktakeSetup(){
+    const locSel = $('stocktakeLocationSelect');
+    locSel.innerHTML = lists.location.map(v=>`<option value="${esc(v)}">${esc(v)}</option>`).join('') || '<option value="">— no locations set up —</option>';
+    const catSel = $('stocktakeCategorySelect');
+    catSel.innerHTML = '<option value="">All categories</option>' + lists.category.map(v=>`<option value="${esc(v)}">${esc(v)}</option>`).join('');
+  }
+
+  $('btnStartStocktake').addEventListener('click', ()=>{
+    stocktakeLocation = $('stocktakeLocationSelect').value;
+    stocktakeCategory = $('stocktakeCategorySelect').value;
+    if(!stocktakeLocation){ showToast('Choose a location first.'); return; }
+    stocktakeExpected = assets.filter(a =>
+      a.location === stocktakeLocation && (!stocktakeCategory || a.category === stocktakeCategory)
+    );
+    stocktakeVerified = [];
+    stocktakeUnexpected = [];
+    stocktakeActive = true;
+    $('stocktakeLocationLabel').textContent = stocktakeLocation + (stocktakeCategory ? ' · ' + stocktakeCategory : '');
+    $('stocktakeSetup').style.display = 'none';
+    $('stocktakeSession').style.display = 'block';
+    renderStocktakeLists();
+  });
+
+  function stocktakeSetStatus(msg, cls){
+    const el = $('stocktakeScanStatus');
+    el.textContent = msg;
+    el.className = 'scan-status' + (cls ? ' '+cls : '');
+  }
+
+  function stocktakeHandleCode(code){
+    code = String(code||'').trim();
+    if(!code) return;
+    if(stocktakeVerified.some(v=>v.id===code)){
+      stocktakeSetStatus('Already verified: ' + code, 'ok');
+      return;
+    }
+    // pull it out of "unexpected" if it was previously flagged there, then re-check
+    stocktakeUnexpected = stocktakeUnexpected.filter(u=>u.id!==code);
+
+    const asset = findExistingAssetForCode(code);
+    if(asset && stocktakeExpected.some(e=>e.id===asset.id)){
+      stocktakeVerified.push({ id: asset.id, name: asset.name, timestamp: new Date().toISOString() });
+      stocktakeSetStatus('Verified: ' + asset.name, 'ok');
+    }else if(asset){
+      stocktakeUnexpected.push({
+        id: asset.id, name: asset.name,
+        reason: 'Found here but its record says "' + (asset.location || 'no location') + '".',
+        timestamp: new Date().toISOString()
+      });
+      stocktakeSetStatus('Not expected here: ' + asset.name, 'err');
+    }else{
+      stocktakeUnexpected.push({
+        id: code, name: '(not in the ledger)',
+        reason: 'Not recorded in Tagbook at all.',
+        timestamp: new Date().toISOString()
+      });
+      stocktakeSetStatus('Unknown tag: ' + code, 'err');
+    }
+    renderStocktakeLists();
+  }
+
+  $('stocktakeManualInput').addEventListener('keydown', (e)=>{
+    if(e.key === 'Enter'){
+      stocktakeHandleCode($('stocktakeManualInput').value);
+      $('stocktakeManualInput').value = '';
+    }
+  });
+
+  function renderStocktakeLists(){
+    const total = stocktakeExpected.length;
+    const verifiedCount = stocktakeVerified.length;
+    $('stocktakeCounts').innerHTML =
+      '<span><b>' + verifiedCount + '</b> of ' + total + ' verified</span>' +
+      '<span><b>' + (total - verifiedCount) + '</b> not yet found</span>' +
+      '<span><b>' + stocktakeUnexpected.length + '</b> unexpected</span>';
+
+    const verifiedBox = $('stocktakeListVerified');
+    verifiedBox.innerHTML = stocktakeVerified.length ? stocktakeVerified.slice().reverse().map(v=>
+      '<div class="stocktake-row"><div><div class="st-id mono">' + esc(v.id) + '</div><div class="st-meta">' + esc(v.name||'') + '</div></div></div>'
+    ).join('') : '<div class="stocktake-empty">Nothing verified yet — start scanning.</div>';
+
+    const missing = stocktakeExpected.filter(a => !stocktakeVerified.some(v=>v.id===a.id));
+    const missingBox = $('stocktakeListMissing');
+    missingBox.innerHTML = missing.length ? missing.map(a=>
+      '<div class="stocktake-row"><div><div class="st-id mono">' + esc(a.id) + '</div><div class="st-meta">' + esc(a.name||'') + '</div></div></div>'
+    ).join('') : '<div class="stocktake-empty">Everything expected here has been found.</div>';
+
+    const unexpectedBox = $('stocktakeListUnexpected');
+    unexpectedBox.innerHTML = stocktakeUnexpected.length ? stocktakeUnexpected.slice().reverse().map(u=>
+      '<div class="stocktake-row"><div><div class="st-id mono">' + esc(u.id) + '</div><div class="st-meta">' + esc(u.name||'') + ' — ' + esc(u.reason||'') + '</div></div></div>'
+    ).join('') : '<div class="stocktake-empty">No unexpected tags scanned.</div>';
+  }
+
+  document.querySelectorAll('.stocktake-subtab').forEach(btn=>{
+    btn.addEventListener('click', ()=>{
+      document.querySelectorAll('.stocktake-subtab').forEach(b=>b.classList.remove('active'));
+      btn.classList.add('active');
+      $('stocktakeListVerified').style.display = btn.dataset.stlist==='verified' ? 'flex' : 'none';
+      $('stocktakeListMissing').style.display = btn.dataset.stlist==='missing' ? 'flex' : 'none';
+      $('stocktakeListUnexpected').style.display = btn.dataset.stlist==='unexpected' ? 'flex' : 'none';
+    });
+  });
+
+  // ---------- stocktake camera (its own instance — independent of the main scanner) ----------
+  $('btnStocktakeScan').addEventListener('click', startStocktakeScanner);
+  $('btnStocktakeStopScan').addEventListener('click', stopStocktakeScanner);
+
+  async function startStocktakeScanner(){
+    if(stocktakeScanStarting || stocktakeQrCode) return;
+    stocktakeScanStarting = true;
+    const reader = $('stocktakeReader');
+    reader.style.display = 'block';
+    $('btnStocktakeScan').style.display = 'none';
+    $('btnStocktakeStopScan').style.display = 'inline-flex';
+    stocktakeSetStatus('Starting camera…', '');
+
+    const config = { fps: 10, qrbox: { width: 240, height: 140 } };
+    stocktakeQrCode = new Html5Qrcode("stocktakeReader");
+    const onScan = (decodedText)=>{ stocktakeHandleCode(decodedText); };
+
+    try{
+      await stocktakeQrCode.start({ facingMode: { exact: "environment" } }, config, onScan, ()=>{});
+      stocktakeScanStarting = false;
+      stocktakeSetStatus('Camera ready — keep scanning as you walk the room.', '');
+    }catch(e1){
+      try{
+        await stocktakeQrCode.start({ facingMode: "environment" }, config, onScan, ()=>{});
+        stocktakeScanStarting = false;
+        stocktakeSetStatus('Camera ready — keep scanning as you walk the room.', '');
+      }catch(e2){
+        stocktakeScanStarting = false;
+        try{ stocktakeQrCode.clear(); }catch(_){}
+        stocktakeQrCode = null;
+        stocktakeSetStatus('Could not start the camera: ' + (e2.message||e2), 'err');
+        $('btnStocktakeScan').style.display = 'inline-flex';
+        $('btnStocktakeStopScan').style.display = 'none';
+        reader.style.display = 'none';
+      }
+    }
+  }
+  function stopStocktakeScanner(){
+    const inst = stocktakeQrCode;
+    stocktakeQrCode = null;
+    if(inst){ inst.stop().then(()=>{ try{ inst.clear(); }catch(_){} }).catch(()=>{}); }
+    $('stocktakeReader').style.display = 'none';
+    $('btnStocktakeScan').style.display = 'inline-flex';
+    $('btnStocktakeStopScan').style.display = 'none';
+  }
+
+  // ---------- finish stocktake: log history + generate report ----------
+  $('btnFinishStocktake').addEventListener('click', async ()=>{
+    stopStocktakeScanner();
+    const today = new Date().toISOString().slice(0,10);
+    const missing = stocktakeExpected.filter(a => !stocktakeVerified.some(v=>v.id===a.id));
+
+    for(const v of stocktakeVerified){
+      await logHistoryEvent(v.id, 'Verified', 'Stocktake: verified at ' + stocktakeLocation + ' on ' + today + '.');
+    }
+    for(const m of missing){
+      await logHistoryEvent(m.id, 'Not Found', 'Stocktake: not found at ' + stocktakeLocation + ' on ' + today + '.');
+    }
+    if(isConnected() && outbox.length) sync('after stocktake');
+
+    // build the report CSV
+    const rows = [];
+    stocktakeVerified.forEach(v => rows.push(['Verified', v.id, v.name, stocktakeLocation, '']));
+    missing.forEach(m => rows.push(['Missing', m.id, m.name, stocktakeLocation, '']));
+    stocktakeUnexpected.forEach(u => rows.push(['Unexpected', u.id, u.name, '', u.reason]));
+    const csvEsc = (v)=>{ v = String(v==null?'':v); return /[",\n]/.test(v) ? '"' + v.replace(/"/g,'""') + '"' : v; };
+    const header = ['Result','Asset Tag','Description','Expected Location','Note'];
+    const lines = [header.map(csvEsc).join(',')].concat(rows.map(r=>r.map(csvEsc).join(',')));
+    const blob = new Blob([lines.join('\n')], { type:'text/csv' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = 'tagbook-stocktake-' + stocktakeLocation.replace(/[^A-Za-z0-9_-]/g,'_') + '-' + today + '.csv';
+    link.click();
+    URL.revokeObjectURL(url);
+
+    showToast('Stocktake finished — ' + stocktakeVerified.length + ' verified, ' + missing.length + ' missing, ' + stocktakeUnexpected.length + ' unexpected. Report downloaded.');
+
+    stocktakeActive = false;
+    $('stocktakeSession').style.display = 'none';
+    $('stocktakeSetup').style.display = 'block';
+  });
+
 
   // ---------- scanner ----------
   let scanTarget = 'tag'; // 'tag' | 'serial'
@@ -2352,6 +2735,7 @@
     const status = $('fStatus').value;
     $('btnCheckOut').style.display = (status === 'Issued') ? 'none' : 'inline-flex';
     $('btnCheckIn').style.display = (status === 'Issued') ? 'inline-flex' : 'none';
+    $('btnRecordDisposal').style.display = (status === 'Disposed') ? 'none' : 'inline-flex';
   }
   $('fStatus').addEventListener('change', updateCheckActions);
 
@@ -2479,6 +2863,44 @@
     return $('checkoutSigCanvas').toDataURL('image/png');
   }
 
+  // ---------- disposal register ----------
+  $('btnRecordDisposal').addEventListener('click', ()=>{
+    $('disposalTagLabel').textContent = $('fTagId').value.trim();
+    $('disposalDateInput').value = new Date().toISOString().slice(0,10);
+    $('disposalMethodInput').value = 'Recycled';
+    $('disposalCertInput').value = '';
+    $('disposalWeeeInput').value = '';
+    $('disposalNotesInput').value = '';
+    $('disposalModal').classList.add('show');
+  });
+  $('btnCancelDisposal').addEventListener('click', ()=> $('disposalModal').classList.remove('show'));
+
+  $('btnConfirmDisposal').addEventListener('click', async ()=>{
+    const date = $('disposalDateInput').value || new Date().toISOString().slice(0,10);
+    const method = $('disposalMethodInput').value;
+    const cert = $('disposalCertInput').value.trim();
+    const weee = $('disposalWeeeInput').value.trim();
+    const notes = $('disposalNotesInput').value.trim();
+
+    $('fStatus').value = 'Disposed';
+    updateCheckActions();
+
+    pendingFieldOverrides = {
+      disposalDate: date, disposalMethod: method,
+      certificateNumber: cert, weeeReference: weee, disposalNotes: notes
+    };
+    let detail = 'Disposed via ' + method + ' on ' + date + '.';
+    if(cert) detail += ' Certificate: ' + cert + '.';
+    if(weee) detail += ' WEEE ref: ' + weee + '.';
+    pendingHistoryOverride = {
+      eventType: 'Disposed', detail: detail,
+      fieldName: 'status', oldValue: '', newValue: 'Disposed'
+    };
+    $('disposalModal').classList.remove('show');
+    await saveCurrentAsset();
+  });
+
+
 
   // Named so Next/Previous can trigger a save (with the same validation and
   // behaviour) before navigating away from an asset with unsaved changes.
@@ -2523,7 +2945,12 @@
       dateIssued: 'dateIssued' in overrides ? overrides.dateIssued : (prevRecord ? prevRecord.dateIssued : ''),
       expectedReturnDate: 'expectedReturnDate' in overrides ? overrides.expectedReturnDate : (prevRecord ? prevRecord.expectedReturnDate : ''),
       returnDate: 'returnDate' in overrides ? overrides.returnDate : (prevRecord ? prevRecord.returnDate : ''),
-      returnCondition: 'returnCondition' in overrides ? overrides.returnCondition : (prevRecord ? prevRecord.returnCondition : '')
+      returnCondition: 'returnCondition' in overrides ? overrides.returnCondition : (prevRecord ? prevRecord.returnCondition : ''),
+      disposalDate: 'disposalDate' in overrides ? overrides.disposalDate : (prevRecord ? prevRecord.disposalDate : ''),
+      disposalMethod: 'disposalMethod' in overrides ? overrides.disposalMethod : (prevRecord ? prevRecord.disposalMethod : ''),
+      certificateNumber: 'certificateNumber' in overrides ? overrides.certificateNumber : (prevRecord ? prevRecord.certificateNumber : ''),
+      weeeReference: 'weeeReference' in overrides ? overrides.weeeReference : (prevRecord ? prevRecord.weeeReference : ''),
+      disposalNotes: 'disposalNotes' in overrides ? overrides.disposalNotes : (prevRecord ? prevRecord.disposalNotes : '')
     };
     pendingFieldOverrides = null;
 
@@ -2640,7 +3067,10 @@
         badges += `<span class="badge badge-lease">Leased${a.leaseEndDate ? ' · ' + describeCountdown(a.leaseEndDate,'ended','ends').text : ''}</span>`;
       }
 
+      const isSelected = selectedAssetIds.has(a.id);
+      if(isSelected) card.classList.add('selected');
       card.innerHTML = `
+        <input type="checkbox" class="tag-select" data-id="${esc(a.id)}" ${isSelected?'checked':''}>
         <div class="punch"></div>
         ${a.photoCount ? `<div class="card-photo-badge">${a.photoCount} photo${a.photoCount===1?'':'s'}</div>` : ''}
         <div class="tag-top">
@@ -2665,6 +3095,15 @@
       grid.appendChild(card);
     });
 
+    grid.querySelectorAll('.tag-select').forEach(cb=>{
+      cb.addEventListener('click', (e)=> e.stopPropagation());
+      cb.addEventListener('change', ()=>{
+        if(cb.checked) selectedAssetIds.add(cb.dataset.id);
+        else selectedAssetIds.delete(cb.dataset.id);
+        cb.closest('.tag-card').classList.toggle('selected', cb.checked);
+        updateBulkBar();
+      });
+    });
     grid.querySelectorAll('.btnView').forEach(b=>{
       b.addEventListener('click', ()=>{
         const a = assets.find(x=>x.id===b.dataset.id);
@@ -2736,6 +3175,11 @@
       vgItem('Expected return', a.expectedReturnDate),
       vgItem('Return date', a.returnDate),
       vgItem('Return condition', a.returnCondition),
+      vgItem('Disposal date', a.disposalDate),
+      vgItem('Disposal method', a.disposalMethod),
+      vgItem('Certificate number', a.certificateNumber),
+      vgItem('WEEE reference', a.weeeReference),
+      vgItem('Disposal notes', a.disposalNotes, true),
       vgItem('Notes', a.notes, true)
     ].join('');
 
@@ -2764,11 +3208,11 @@
   }
 
   function historyDotClass(eventType){
-    if(eventType === 'Status Change' || eventType === 'Checked Out' || eventType === 'Checked In') return 'status';
-    if(eventType === 'Location Change') return 'location';
+    if(eventType === 'Status Change' || eventType === 'Checked Out' || eventType === 'Checked In' || eventType === 'Disposed') return 'status';
+    if(eventType === 'Location Change' || eventType === 'Not Found') return 'location';
     if(eventType === 'Assignment Change') return 'assignment';
     if(eventType === 'Photo Added' || eventType === 'Photo Removed') return 'photo';
-    if(eventType === 'Created') return 'created';
+    if(eventType === 'Created' || eventType === 'Verified') return 'created';
     return '';
   }
   function renderViewHistory(entries){
@@ -2812,6 +3256,7 @@
   $('viewLightbox').addEventListener('click', ()=> $('viewLightbox').classList.remove('show'));
   $('btnConfirmDelete').addEventListener('click', async ()=>{
     const idToDelete = pendingDeleteId;
+    selectedAssetIds.delete(idToDelete);
     $('confirmModal').classList.remove('show');
     if(isConnected()){
       await queueDelete(idToDelete);
@@ -3170,7 +3615,7 @@
   // ---------- export ----------
   $('btnExport').addEventListener('click', ()=>{
     if(!assets.length){ showToast('No assets to export yet.'); return; }
-    const cols = ['id','name','category','status','location','assignedTo','serialNumber','purchaseDate','value','warrantyProvider','warrantyExpiry','isLeased','leaseEndDate','photoCount','notes','dateAdded','dateUpdated'];
+    const cols = ['id','name','category','deviceType','status','location','assignedTo','serialNumber','purchaseDate','value','warrantyProvider','warrantyExpiry','isLeased','leaseEndDate','dateIssued','expectedReturnDate','returnDate','returnCondition','disposalDate','disposalMethod','certificateNumber','weeeReference','disposalNotes','photoCount','notes','dateAdded','dateUpdated'];
     const csvEsc = (v) => {
       if(v==null) v='';
       v = String(v);
@@ -3186,6 +3631,29 @@
     link.download = 'tagbook-assets-' + new Date().toISOString().slice(0,10) + '.csv';
     link.click();
     URL.revokeObjectURL(url);
+  });
+
+  $('btnExportDisposal').addEventListener('click', ()=>{
+    const disposed = assets.filter(a => a.status === 'Disposed');
+    if(!disposed.length){ showToast('No disposed assets to export yet.'); return; }
+    const cols = ['id','name','category','deviceType','serialNumber','location','disposalDate','disposalMethod','certificateNumber','weeeReference','disposalNotes'];
+    const colLabels = ['Asset Tag','Description','Category','Device Type','Serial Number','Last Location','Disposal Date','Disposal Method','Certificate Number','WEEE Reference','Notes'];
+    const csvEsc = (v) => {
+      if(v==null) v='';
+      v = String(v);
+      return /[",\n]/.test(v) ? '"' + v.replace(/"/g,'""') + '"' : v;
+    };
+    const lines = [colLabels.map(csvEsc).join(',')].concat(
+      disposed.map(a=>cols.map(c=>csvEsc(a[c])).join(','))
+    );
+    const blob = new Blob([lines.join('\n')], {type:'text/csv'});
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = 'tagbook-disposal-register-' + new Date().toISOString().slice(0,10) + '.csv';
+    link.click();
+    URL.revokeObjectURL(url);
+    showToast('Exported ' + disposed.length + ' disposed asset' + (disposed.length===1?'':'s') + '.');
   });
 
   // ---------- toast ----------
@@ -3413,10 +3881,149 @@
     renderLog();
   });
 
+  // ---------- bulk operations ----------
+  function updateBulkBar(){
+    const bar = $('bulkBar');
+    const n = selectedAssetIds.size;
+    bar.classList.toggle('show', n > 0);
+    $('bulkCount').textContent = n + ' selected';
+  }
+
+  $('btnSelectAllVisible').addEventListener('click', ()=>{
+    const visible = getFilteredSortedAssets();
+    const allSelected = visible.length > 0 && visible.every(a=>selectedAssetIds.has(a.id));
+    if(allSelected){
+      visible.forEach(a=>selectedAssetIds.delete(a.id));
+    }else{
+      visible.forEach(a=>selectedAssetIds.add(a.id));
+    }
+    renderInventory();
+    updateBulkBar();
+  });
+
+  $('btnBulkClear').addEventListener('click', ()=>{
+    selectedAssetIds.clear();
+    renderInventory();
+    updateBulkBar();
+  });
+
+  // apply one field change to every selected asset, offline-first, in one batch
+  async function applyBulkFieldChange(field, value, eventType, detailText){
+    const now = new Date().toISOString();
+    const newOutboxOps = [];
+    let changedCount = 0;
+    for(const id of selectedAssetIds){
+      const idx = assets.findIndex(a=>a.id===id);
+      if(idx===-1) continue;
+      const prev = assets[idx];
+      if(prev[field] === value) continue;
+      const updated = Object.assign({}, prev, { dateUpdated: now });
+      updated[field] = value;
+      assets[idx] = updated;
+      newOutboxOps.push({ op:'save', id: updated.id, record: updated, ts: Date.now() });
+      changedCount++;
+      await logHistoryEvent(updated.id, eventType, detailText);
+    }
+    if(changedCount === 0){ showToast('Nothing to change — all selected assets already match.'); return; }
+
+    if(isConnected()){
+      const newIds = new Set(newOutboxOps.map(o=>o.id));
+      outbox = outbox.filter(o=> !(o.op==='save' && newIds.has(o.id)));
+      outbox.push(...newOutboxOps);
+      await saveCache();
+      await saveOutbox();
+      renderAll();
+      updateSyncUI();
+      showToast('Updated ' + changedCount + ' asset' + (changedCount===1?'':'s') + ' — uploading to SharePoint.');
+      sync('bulk update');
+    }else{
+      await persistLocal();
+      renderAll();
+      showToast('Updated ' + changedCount + ' asset' + (changedCount===1?'':'s') + ' (local).');
+    }
+    selectedAssetIds.clear();
+    updateBulkBar();
+  }
+
+  // the shared "pick a value" modal — reused for Location / Status / Assigned To
+  let bulkPendingField = null;
+  let bulkPendingEventType = '';
+  function openBulkValueModal(field, title, label, options, eventType){
+    bulkPendingField = field;
+    bulkPendingEventType = eventType;
+    $('bulkValueTitle').textContent = title;
+    $('bulkValueIntro').textContent = 'Applies to ' + selectedAssetIds.size + ' selected asset' + (selectedAssetIds.size===1?'':'s') + '.';
+    $('bulkValueLabel').textContent = label;
+    $('bulkValueSelect').innerHTML = options;
+    $('bulkValueModal').classList.add('show');
+  }
+  $('btnCancelBulkValue').addEventListener('click', ()=> $('bulkValueModal').classList.remove('show'));
+
+  $('btnBulkLocation').addEventListener('click', ()=>{
+    let opts = '<option value="">— none —</option>';
+    opts += lists.location.map(v=>`<option value="${esc(v)}">${esc(v)}</option>`).join('');
+    openBulkValueModal('location', 'Bulk set location', 'Location', opts, 'Location Change');
+  });
+  $('btnBulkStatus').addEventListener('click', ()=>{
+    const statuses = ['Ordered','Delivered','In Build','In Stock','In Storage','In Use','Issued','Under Repair','Returned','Retired','Disposed'];
+    const opts = statuses.map(v=>`<option value="${esc(v)}">${esc(v)}</option>`).join('');
+    openBulkValueModal('status', 'Bulk set status', 'Status', opts, 'Status Change');
+  });
+  $('btnBulkAssign').addEventListener('click', ()=>{
+    let opts = '<option value="">— none —</option>';
+    if(lists.department.length) opts += '<optgroup label="Departments">' + lists.department.map(v=>`<option value="${esc(v)}">${esc(v)}</option>`).join('') + '</optgroup>';
+    if(staffList.length) opts += '<optgroup label="Staff">' + staffList.map(v=>`<option value="${esc(v)}">${esc(v)}</option>`).join('') + '</optgroup>';
+    openBulkValueModal('assignedTo', 'Bulk assign to', 'Assigned to', opts, 'Assignment Change');
+  });
+
+  $('btnConfirmBulkValue').addEventListener('click', async ()=>{
+    const value = $('bulkValueSelect').value;
+    const label = $('bulkValueSelect').options[$('bulkValueSelect').selectedIndex]?.text || value;
+    $('bulkValueModal').classList.remove('show');
+    await applyBulkFieldChange(bulkPendingField, value, bulkPendingEventType, 'Bulk update: set to "' + label + '".');
+  });
+
+  $('btnBulkRetire').addEventListener('click', ()=>{
+    $('bulkConfirmTitle').textContent = 'Retire selected assets?';
+    $('bulkConfirmText').textContent = 'Sets Status to "Retired" for ' + selectedAssetIds.size + ' selected asset' + (selectedAssetIds.size===1?'':'s') + '.';
+    $('bulkConfirmModal').dataset.action = 'retire';
+    $('bulkConfirmModal').classList.add('show');
+  });
+  $('btnCancelBulkConfirm').addEventListener('click', ()=> $('bulkConfirmModal').classList.remove('show'));
+  $('btnConfirmBulkConfirm').addEventListener('click', async ()=>{
+    const action = $('bulkConfirmModal').dataset.action;
+    $('bulkConfirmModal').classList.remove('show');
+    if(action === 'retire'){
+      await applyBulkFieldChange('status', 'Retired', 'Status Change', 'Bulk retired.');
+    }
+  });
+
+  $('btnBulkExport').addEventListener('click', ()=>{
+    const selected = assets.filter(a=>selectedAssetIds.has(a.id));
+    if(!selected.length){ showToast('Nothing selected.'); return; }
+    const cols = ['id','name','category','deviceType','status','location','assignedTo','serialNumber','purchaseDate','value','warrantyProvider','warrantyExpiry','isLeased','leaseEndDate','notes','dateAdded','dateUpdated'];
+    const csvEsc = (v) => {
+      if(v==null) v='';
+      v = String(v);
+      return /[",\n]/.test(v) ? '"' + v.replace(/"/g,'""') + '"' : v;
+    };
+    const lines = [cols.join(',')].concat(selected.map(a=>cols.map(c=>csvEsc(a[c])).join(',')));
+    const blob = new Blob([lines.join('\n')], {type:'text/csv'});
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = 'tagbook-selected-' + new Date().toISOString().slice(0,10) + '.csv';
+    link.click();
+    URL.revokeObjectURL(url);
+    showToast('Exported ' + selected.length + ' asset' + (selected.length===1?'':'s') + '.');
+  });
+
+
   function renderAll(){
     $('totalCount').textContent = assets.length;
     refreshCategoryFilter();
     renderInventory();
+    updateBulkBar();
     if($('panel-overview').classList.contains('active')) renderOverview();
   }
 
@@ -3425,6 +4032,7 @@
     await loadLists();
     await loadStaff();
     await loadTagPrefixes();
+    populateStocktakeSetup();
     await loadAssets();
     renderPhotoStrip();
     updateCountdownHints();
