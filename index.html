@@ -351,6 +351,10 @@
   .stocktake-row .st-id{font-family:'IBM Plex Mono'; font-weight:600;}
   .stocktake-row .st-meta{color:var(--ink-faint); font-size:11.5px; margin-top:1px;}
   .stocktake-empty{color:var(--ink-faint); font-size:13px; text-align:center; padding:20px 0;}
+  .scan-confirm-value{
+    font-size:22px; font-weight:700; color:var(--ink); background:var(--bg);
+    border:1px solid var(--border); border-radius:8px; padding:14px; word-break:break-all;
+  }
   .tag-card .punch{
     position:absolute; top:14px; right:14px; width:10px;height:10px;border-radius:50%;
     background:var(--bg); border:1px solid var(--border);
@@ -977,6 +981,18 @@
     <div class="row">
       <button class="btn" id="btnCancelBulkConfirm">Cancel</button>
       <button class="btn btn-danger" id="btnConfirmBulkConfirm">Confirm</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal-backdrop" id="scanConfirmModal">
+  <div class="modal" style="max-width:360px; text-align:center;">
+    <h3>Confirm scanned code</h3>
+    <p style="margin-bottom:14px;">Barcode scans can occasionally drop a character — check this looks right before it's used.</p>
+    <div class="scan-confirm-value mono" id="scanConfirmValue"></div>
+    <div class="row" style="margin-top:18px; justify-content:center; gap:12px;">
+      <button class="btn" id="btnScanConfirmRescan">Rescan</button>
+      <button class="btn btn-primary" id="btnScanConfirmUse">Use this</button>
     </div>
   </div>
 </div>
@@ -1807,6 +1823,7 @@
   let currentCaptureLabel = 'Condition';
   function startCapture(label){
     currentCaptureLabel = label || 'Condition';
+    blurActiveField();
     $('fPhotoInput').click();
   }
   document.querySelectorAll('.photo-cap[data-label]').forEach(btn=>{
@@ -2253,6 +2270,7 @@
 
   async function startStocktakeScanner(){
     if(stocktakeScanStarting || stocktakeQrCode) return;
+    blurActiveField();
     stocktakeScanStarting = true;
     const reader = $('stocktakeReader');
     reader.style.display = 'block';
@@ -2378,8 +2396,17 @@
     scrollToReader();
   });
 
+  // dismiss the on-screen keyboard before opening a camera or file picker —
+  // otherwise it can linger and overlap the camera view on mobile
+  function blurActiveField(){
+    if(document.activeElement && typeof document.activeElement.blur === 'function'){
+      document.activeElement.blur();
+    }
+  }
+
   async function startScanner(){
     if(scanStarting || html5QrCode) return; // avoid double-starts that jam the camera
+    blurActiveField();
     scanStarting = true;
     const reader = $('reader');
     reader.style.display='block';
@@ -2444,10 +2471,20 @@
     $('btnStopScan').style.display='none';
   }
 
+  // A misread barcode (a dropped or swapped character) is cheap to catch here
+  // and expensive to catch later, so every scan pauses for a quick confirm
+  // before it's actually used.
+  let scanConfirmTarget = null; // the scanTarget in effect when this scan was captured
   function onScanSuccess(decodedText){
+    stopScanner();
+    scanConfirmTarget = scanTarget;
+    $('scanConfirmValue').textContent = decodedText;
+    $('scanConfirmModal').classList.add('show');
+  }
+
+  function commitScannedValue(decodedText){
     setScanStatus('Scanned: ' + decodedText, 'ok');
-    if(scanTarget === 'serial'){
-      stopScanner();
+    if(scanConfirmTarget === 'serial'){
       $('fSerial').value = decodedText;
       showFormBanner('Serial number scanned. Add the rest of the details and save.');
       $('fSerial').focus();
@@ -2455,7 +2492,6 @@
       scanChain = false;
     }else{
       // asset tag scanned
-      stopScanner();
       handleIncomingCode(decodedText, /*skipFocus*/ scanChain);
       if(scanChain){
         // auto-advance to the serial scan without the user changing anything —
@@ -2471,6 +2507,17 @@
       }
     }
   }
+
+  $('btnScanConfirmUse').addEventListener('click', ()=>{
+    const value = $('scanConfirmValue').textContent;
+    $('scanConfirmModal').classList.remove('show');
+    commitScannedValue(value);
+  });
+  $('btnScanConfirmRescan').addEventListener('click', ()=>{
+    $('scanConfirmModal').classList.remove('show');
+    scanTarget = scanConfirmTarget;
+    startScanner();
+  });
 
   function setScanStatus(msg, cls){
     const el = $('scanStatus');
@@ -3843,6 +3890,21 @@
   setInterval(()=>{
     if(isConnected() && !syncing){ lastAutoSync = Date.now(); sync('auto refresh'); }
   }, 45000);
+
+  // Rotating the phone mid-scan can leave the camera preview sized for the old
+  // orientation — restarting it forces a clean re-fit to the new dimensions.
+  let orientationRestartTimer = null;
+  function handleOrientationChange(){
+    clearTimeout(orientationRestartTimer);
+    orientationRestartTimer = setTimeout(()=>{
+      if(html5QrCode){ stopScanner(); setTimeout(startScanner, 300); }
+      if(stocktakeQrCode){ stopStocktakeScanner(); setTimeout(startStocktakeScanner, 300); }
+    }, 400); // debounce — orientationchange can fire before the viewport actually settles
+  }
+  window.addEventListener('orientationchange', handleOrientationChange);
+  if(window.screen && window.screen.orientation){
+    window.screen.orientation.addEventListener('change', handleOrientationChange);
+  }
 
   // Refresh immediately when the app/tab regains focus (e.g. switching back
   // from another app on the phone, or back to this browser tab on the PC).
