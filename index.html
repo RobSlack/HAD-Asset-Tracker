@@ -2987,9 +2987,33 @@
       $('fCategory').focus();
       return false;
     }
+    // If we're mid-edit and the Asset Tag field was changed, this is a rename,
+    // not a new asset — without this check, saving would create a duplicate
+    // under the new tag while leaving the original row behind untouched.
+    const isRename = !!editingId && id !== editingId;
+    const oldId = editingId;
+    if(isRename && assets.some(a => a.id === id)){
+      showToast('Another asset already uses tag "' + id + '". Choose a different tag.');
+      return false;
+    }
+    // Tag uniqueness is naturally enforced by using it as the record's id — the
+    // one gap was renaming (fixed above). Serial numbers have no such built-in
+    // protection, so check explicitly: each serial should belong to one asset.
+    const serialVal = $('fSerial').value.trim();
+    if(serialVal){
+      const serialDupe = assets.find(a =>
+        a.id !== editingId && a.serialNumber && a.serialNumber.trim().toLowerCase() === serialVal.toLowerCase()
+      );
+      if(serialDupe){
+        showToast('Serial "' + serialVal + '" is already recorded against "' + serialDupe.id + '" (' + (serialDupe.name||'untitled') + ').');
+        $('fSerial').focus();
+        return false;
+      }
+    }
+
     const name = $('fName').value.trim() || '(untitled asset)';
     const now = new Date().toISOString();
-    const existingIdx = assets.findIndex(a=>a.id===id);
+    const existingIdx = isRename ? assets.findIndex(a=>a.id===oldId) : assets.findIndex(a=>a.id===id);
     const prevRecord = existingIdx>-1 ? assets[existingIdx] : null;
     const isLeased = $('fLeased').checked;
     const overrides = pendingFieldOverrides || {};
@@ -3011,7 +3035,7 @@
       leaseEndDate: isLeased ? $('fLeaseEnd').value : '',
       notes: $('fNotes').value.trim(),
       photoCount: formPhotos.length,
-      dateAdded: existingIdx>-1 ? assets[existingIdx].dateAdded : now,
+      dateAdded: prevRecord ? prevRecord.dateAdded : now,
       dateUpdated: now,
       dateIssued: 'dateIssued' in overrides ? overrides.dateIssued : (prevRecord ? prevRecord.dateIssued : ''),
       expectedReturnDate: 'expectedReturnDate' in overrides ? overrides.expectedReturnDate : (prevRecord ? prevRecord.expectedReturnDate : ''),
@@ -3025,11 +3049,34 @@
     };
     pendingFieldOverrides = null;
 
-    const wasExisting = existingIdx > -1;
+    const wasExisting = isRename || existingIdx > -1;
     await recordHistoryDiffs(prevRecord, record, wasExisting);
     const addedPhotoCount = formPhotos.filter(p => !formLoadedPhotoIds.includes(p.id)).length;
     if(addedPhotoCount > 0){
       await logHistoryEvent(record.id, 'Photo Added', addedPhotoCount + ' photo' + (addedPhotoCount===1?'':'s') + ' added.');
+    }
+
+    if(isRename){
+      // Photos live as SharePoint attachments on the old row, which we're
+      // about to delete — mark them unsynced so they re-upload fresh under
+      // the new tag rather than being lost when the old row goes.
+      formPhotos.forEach(p => { p.synced = false; delete p.remoteName; });
+
+      // Carry the local history timeline over to the new tag so it isn't
+      // orphaned under a tag that no longer exists.
+      const oldHistory = await loadHistoryFor(oldId);
+      if(oldHistory.length) await saveHistoryFor(id, oldHistory);
+      await logHistoryEvent(id, 'Renamed', 'Tag renamed from "' + oldId + '" to "' + id + '".');
+
+      // Remove the old row (and its own local caches) now that everything
+      // that matters has been carried over to the new tag.
+      if(isConnected()){
+        await queueDelete(oldId);
+      }else{
+        assets = assets.filter(a => a.id !== oldId);
+        await persistLocal();
+      }
+      await deletePhotosFor(oldId);
     }
 
     if(isConnected()){
@@ -3044,10 +3091,10 @@
       }
       hideFormBanner();
       renderAll();
-      showToast((wasExisting ? 'Updated "' : 'Added "') + name + '" — saving to SharePoint.');
+      showToast((isRename ? 'Renamed to "' : wasExisting ? 'Updated "' : 'Added "') + name + '" — saving to SharePoint.');
       sync('after save');               // upload now if online; otherwise stays queued
     }else{
-      if(wasExisting) assets[existingIdx] = record; else assets.push(record);
+      if(wasExisting && !isRename) assets[existingIdx] = record; else assets.push(record);
       await persistLocal();
       await savePhotosFor(id, formPhotos);
       if(wasExisting){
@@ -3057,7 +3104,7 @@
       }
       hideFormBanner();
       renderAll();
-      showToast(wasExisting ? 'Updated "' + name + '" (local).' : 'Added "' + name + '" (local).');
+      showToast(isRename ? 'Renamed to "' + name + '" (local).' : wasExisting ? 'Updated "' + name + '" (local).' : 'Added "' + name + '" (local).');
     }
     return true;
   }
@@ -3563,13 +3610,26 @@
     const cols = ['id','serialNumber','name','category','status'];
     const colLabels = ['Asset Tag','Serial','Description','Category','Status'];
     let html = '<thead><tr>' + colLabels.map(c=>'<th>'+c+'</th>').join('') + '</tr></thead><tbody>';
+
+    const serialOwner = new Map();
+    assets.forEach(a=>{
+      const k = (a.serialNumber||'').trim().toLowerCase();
+      if(k) serialOwner.set(k, a.id);
+    });
+
     rowsToShow.forEach(row=>{
       const rec = buildRecordFromRow(row);
+      const serialKey = (rec.serialNumber||'').trim().toLowerCase();
+      const owner = serialKey ? serialOwner.get(serialKey) : null;
+      const dupeSerial = owner && owner !== rec.id;
       html += '<tr>' + cols.map(c=>{
         const v = rec[c];
         const missing = c==='id' && !v;
-        return '<td class="' + (missing?'warn':'') + '">' + esc(v || (missing?'(no tag/serial)':'')) + '</td>';
+        const flagged = missing || (c==='serialNumber' && dupeSerial);
+        const note = missing ? '(no tag/serial)' : (c==='serialNumber' && dupeSerial ? ' (already used by ' + owner + ')' : '');
+        return '<td class="' + (flagged?'warn':'') + '">' + esc((v||'') + (v ? note : (missing?note:''))) + '</td>';
       }).join('') + '</tr>';
+      if(serialKey && !dupeSerial) serialOwner.set(serialKey, rec.id);
     });
     html += '</tbody>';
     $('importPreview').innerHTML = html;
@@ -3580,20 +3640,40 @@
   $('btnRunImport').addEventListener('click', async ()=>{
     $('btnRunImport').disabled = true;
     const newOutboxOps = [];
-    let imported = 0, skipped = 0;
+    let imported = 0, skipped = 0, skippedDupeSerial = 0;
     const now = new Date().toISOString();
+
+    // track which tag currently "owns" each serial — starts from existing data,
+    // and updates as rows are processed so duplicates within the same CSV are
+    // caught too, not just clashes against what's already recorded
+    const serialOwner = new Map();
+    assets.forEach(a=>{
+      const k = (a.serialNumber||'').trim().toLowerCase();
+      if(k) serialOwner.set(k, a.id);
+    });
 
     importRows.forEach(row=>{
       const rec = buildRecordFromRow(row);
       if(!rec.id){ skipped++; return; }
+      const serialKey = (rec.serialNumber||'').trim().toLowerCase();
+      if(serialKey){
+        const owner = serialOwner.get(serialKey);
+        if(owner && owner !== rec.id){ skippedDupeSerial++; return; } // already belongs to a different tag
+      }
       const existingIdx = assets.findIndex(a=>a.id===rec.id);
       rec.dateAdded = existingIdx>-1 ? assets[existingIdx].dateAdded : now;
       rec.dateUpdated = now;
       rec.photoCount = existingIdx>-1 ? (assets[existingIdx].photoCount||0) : 0;
       if(existingIdx>-1) assets[existingIdx] = rec; else assets.push(rec);
       newOutboxOps.push({ op:'save', id:rec.id, record:rec, ts:Date.now() });
+      if(serialKey) serialOwner.set(serialKey, rec.id);
       imported++;
     });
+
+    const skipNote = [
+      skipped ? skipped + ' with no tag or serial' : '',
+      skippedDupeSerial ? skippedDupeSerial + ' with a serial already recorded elsewhere' : ''
+    ].filter(Boolean).join(', ');
 
     if(isConnected()){
       const newIds = new Set(newOutboxOps.map(o=>o.id));
@@ -3603,13 +3683,13 @@
       await saveOutbox();
       renderAll();
       updateSyncUI();
-      showToast('Imported ' + imported + ' asset' + (imported===1?'':'s') + (skipped ? ', skipped ' + skipped + ' (no tag or serial)' : '') + ' — uploading to SharePoint.');
+      showToast('Imported ' + imported + ' asset' + (imported===1?'':'s') + (skipNote ? ', skipped ' + skipNote : '') + ' — uploading to SharePoint.');
       startImportProgress(newIds, imported);
       sync('csv import');
     }else{
       await persistLocal();
       renderAll();
-      showToast('Imported ' + imported + ' asset' + (imported===1?'':'s') + (skipped ? ', skipped ' + skipped : '') + ' (local).');
+      showToast('Imported ' + imported + ' asset' + (imported===1?'':'s') + (skipNote ? ', skipped ' + skipNote : '') + ' (local).');
       $('importModal').classList.remove('show');
     }
     $('btnRunImport').disabled = false;
