@@ -15,6 +15,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/html5-qrcode/2.3.8/html5-qrcode.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
 <style>
   :root{
     --bg:#F3F4F1;
@@ -360,6 +361,12 @@
     font-size:22px; font-weight:700; color:var(--ink); background:var(--bg);
     border:1px solid var(--border); border-radius:8px; padding:14px; word-break:break-all;
   }
+  .ocr-row{margin-top:12px; text-align:center;}
+  .ocr-raw-text{
+    font-size:11px; color:var(--ink-faint); white-space:pre-wrap; margin-top:8px;
+    max-height:140px; overflow-y:auto; background:var(--bg); border:1px solid var(--border);
+    border-radius:6px; padding:8px 10px;
+  }
   .tag-card .punch{
     position:absolute; top:14px; right:14px; width:10px;height:10px;border-radius:50%;
     background:var(--bg); border:1px solid var(--border);
@@ -530,6 +537,10 @@
         <button class="btn" id="btnStopScan" style="display:none;">Stop camera</button>
       </div>
       <div class="scan-status" id="scanStatus"></div>
+      <div class="ocr-row">
+        <button class="btn" id="btnOcrServiceTag">🔤 No barcode? Read Service Tag from a photo</button>
+        <input type="file" id="ocrPhotoInput" accept="image/*" capture="environment" style="display:none">
+      </div>
     </div>
 
     <div class="divider-label">or enter details manually</div>
@@ -1004,6 +1015,25 @@
     <div class="row" style="margin-top:18px; justify-content:center; gap:12px;">
       <button class="btn" id="btnScanConfirmRescan">Rescan</button>
       <button class="btn btn-primary" id="btnScanConfirmUse">Use this</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal-backdrop" id="ocrConfirmModal">
+  <div class="modal" style="max-width:400px;">
+    <h3>Confirm Service Tag</h3>
+    <p id="ocrIntro" style="margin-bottom:12px;">Text recognition can misread similar characters (0/O, 1/I, 8/B) — check this against the label.</p>
+    <div class="field full" style="margin-bottom:10px;">
+      <label for="ocrValueInput">Service tag / serial</label>
+      <input type="text" id="ocrValueInput" class="mono" style="font-size:18px; text-align:center; font-weight:700;">
+    </div>
+    <details>
+      <summary style="cursor:pointer; font-size:12px; color:var(--ink-soft);">Show all text detected in the photo</summary>
+      <div class="mono ocr-raw-text" id="ocrRawText"></div>
+    </details>
+    <div class="row" style="margin-top:16px; justify-content:space-between;">
+      <button class="btn" id="btnOcrRetake">Retake photo</button>
+      <button class="btn btn-primary" id="btnOcrUse">Use this</button>
     </div>
   </div>
 </div>
@@ -2529,6 +2559,79 @@
     scanTarget = scanConfirmTarget;
     startScanner();
   });
+
+  // ---------- text recognition (OCR) for text-only Service Tag labels ----------
+  // Some Dell/HP labels have no barcode at all, just printed text — barcode
+  // scanning can't read that, so this takes a photo and runs OCR instead.
+  let ocrBusy = false;
+
+  function extractDellServiceTag(text){
+    // Look specifically for "Service Tag" followed by a short alphanumeric code —
+    // Dell's own codes are typically 7 characters — rather than guessing at any
+    // stray code-looking text on the label, which risks picking up the wrong one
+    // (asset tag, express service code, regulatory model, etc. are all nearby).
+    // The capture itself must be genuinely uppercase+digits (no /i there) — with
+    // /i applied to a character class, ordinary lowercase words would otherwise
+    // match too, and a stray "mentioned" could get picked up as a fake tag.
+    const str = String(text||'').replace(/[|]/g,'I');
+    const idx = str.search(/service\s*tag/i);
+    if(idx === -1) return '';
+    const after = str.slice(idx).replace(/service\s*tag/i, '');
+    const m = after.match(/[A-Z0-9]{5,8}/);
+    return m ? m[0] : '';
+  }
+
+  $('btnOcrServiceTag').addEventListener('click', ()=>{
+    if(typeof Tesseract === 'undefined'){
+      showToast('Text recognition library did not load — check your connection and try again.');
+      return;
+    }
+    blurActiveField();
+    $('ocrPhotoInput').click();
+  });
+
+  $('ocrPhotoInput').addEventListener('change', async (e)=>{
+    const file = e.target.files && e.target.files[0];
+    e.target.value = '';
+    if(!file) return;
+    if(ocrBusy) return;
+    ocrBusy = true;
+    $('btnOcrServiceTag').disabled = true;
+    setScanStatus('Reading the label… this can take several seconds.', '');
+    try{
+      const result = await Tesseract.recognize(file, 'eng');
+      const text = (result && result.data && result.data.text) ? result.data.text : '';
+      const guess = extractDellServiceTag(text);
+      $('ocrValueInput').value = guess;
+      $('ocrRawText').textContent = text.trim() || '(no text detected in that photo)';
+      $('ocrConfirmModal').classList.add('show');
+      setScanStatus(
+        guess ? 'Found a likely service tag — double-check it below.' : 'Couldn\u2019t confidently find "Service Tag" — check the raw text and type it in.',
+        guess ? 'ok' : 'err'
+      );
+    }catch(err){
+      showToast('Could not read that photo: ' + (err && err.message ? err.message : err));
+      setScanStatus('Text recognition failed — try a clearer, closer, well-lit photo.', 'err');
+    }
+    ocrBusy = false;
+    $('btnOcrServiceTag').disabled = false;
+  });
+
+  $('btnOcrRetake').addEventListener('click', ()=>{
+    $('ocrConfirmModal').classList.remove('show');
+    $('ocrPhotoInput').click();
+  });
+
+  $('btnOcrUse').addEventListener('click', ()=>{
+    const val = $('ocrValueInput').value.trim();
+    if(!val){ showToast('Enter a value first, or retake the photo.'); return; }
+    $('ocrConfirmModal').classList.remove('show');
+    $('fSerial').value = val;
+    showFormBanner('Serial number read from photo — double-check it, then add the rest of the details and save.');
+    $('fSerial').focus();
+    showToast('Serial number captured from photo.');
+  });
+
 
   function setScanStatus(msg, cls){
     const el = $('scanStatus');
