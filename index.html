@@ -535,6 +535,8 @@
         <button class="btn" id="btnScanTagOnly">2. Scan Tag</button>
         <button class="btn" id="btnScanSerialOnly">3. Scan Serial</button>
         <button class="btn" id="btnStopScan" style="display:none;">Stop camera</button>
+        <button class="btn" id="btnTorch" style="display:none;">🔦 Torch</button>
+        <button class="btn" id="btnRefocus" style="display:none;">🎯 Refocus</button>
       </div>
       <div class="scan-status" id="scanStatus"></div>
       <div class="ocr-row">
@@ -733,6 +735,8 @@
         <div class="scan-controls">
           <button class="btn btn-primary" id="btnStocktakeScan">Start camera</button>
           <button class="btn" id="btnStocktakeStopScan" style="display:none;">Stop camera</button>
+          <button class="btn" id="btnStocktakeTorch" style="display:none;">🔦 Torch</button>
+          <button class="btn" id="btnStocktakeRefocus" style="display:none;">🎯 Refocus</button>
         </div>
         <div class="scan-status" id="stocktakeScanStatus"></div>
         <div class="stocktake-manual">
@@ -2327,11 +2331,13 @@
       await stocktakeQrCode.start({ facingMode: { exact: "environment" } }, config, onScan, ()=>{});
       stocktakeScanStarting = false;
       stocktakeSetStatus('Camera ready — keep scanning as you walk the room.', '');
+      setupStocktakeCameraControls();
     }catch(e1){
       try{
         await stocktakeQrCode.start({ facingMode: "environment" }, config, onScan, ()=>{});
         stocktakeScanStarting = false;
         stocktakeSetStatus('Camera ready — keep scanning as you walk the room.', '');
+        setupStocktakeCameraControls();
       }catch(e2){
         stocktakeScanStarting = false;
         try{ stocktakeQrCode.clear(); }catch(_){}
@@ -2350,7 +2356,43 @@
     $('stocktakeReader').style.display = 'none';
     $('btnStocktakeScan').style.display = 'inline-flex';
     $('btnStocktakeStopScan').style.display = 'none';
+    $('btnStocktakeTorch').style.display = 'none';
+    $('btnStocktakeRefocus').style.display = 'none';
+    stocktakeTorchOn = false;
   }
+
+  let stocktakeTorchOn = false;
+  function setupStocktakeCameraControls(){
+    let caps = {};
+    try{ caps = stocktakeQrCode ? (stocktakeQrCode.getRunningTrackCapabilities() || {}) : {}; }catch(e){ caps = {}; }
+    if(caps.torch){
+      stocktakeTorchOn = false;
+      $('btnStocktakeTorch').style.display = 'inline-flex';
+      $('btnStocktakeTorch').textContent = '🔦 Torch: Off';
+    }else{
+      $('btnStocktakeTorch').style.display = 'none';
+    }
+    $('btnStocktakeRefocus').style.display = caps.focusMode ? 'inline-flex' : 'none';
+  }
+  $('btnStocktakeTorch').addEventListener('click', async ()=>{
+    if(!stocktakeQrCode) return;
+    try{
+      await stocktakeQrCode.applyVideoConstraints({ advanced: [{ torch: !stocktakeTorchOn }] });
+      stocktakeTorchOn = !stocktakeTorchOn;
+      $('btnStocktakeTorch').textContent = stocktakeTorchOn ? '🔦 Torch: On' : '🔦 Torch: Off';
+    }catch(e){
+      showToast('Could not control the torch on this device.');
+    }
+  });
+  $('btnStocktakeRefocus').addEventListener('click', async ()=>{
+    if(!stocktakeQrCode) return;
+    try{
+      await stocktakeQrCode.applyVideoConstraints({ advanced: [{ focusMode: 'continuous' }] });
+      stocktakeSetStatus('Refocused — keep scanning.', 'ok');
+    }catch(e){
+      stocktakeSetStatus('Could not force a refocus on this device.', 'err');
+    }
+  });
 
   // ---------- finish stocktake: log history + generate report ----------
   $('btnFinishStocktake').addEventListener('click', async ()=>{
@@ -2465,12 +2507,14 @@
       await html5QrCode.start({ facingMode: { exact: "environment" } }, config, onScanSuccess, ()=>{});
       scanStarting = false;
       setScanStatus('Camera ready — point at the barcode.', '');
+      setupMainCameraControls();
       return;
     }catch(e1){
       try{
         await html5QrCode.start({ facingMode: "environment" }, config, onScanSuccess, ()=>{});
         scanStarting = false;
         setScanStatus('Camera ready — point at the barcode.', '');
+        setupMainCameraControls();
         return;
       }catch(e2){
         try{
@@ -2480,6 +2524,7 @@
             await html5QrCode.start(back.id, config, onScanSuccess, ()=>{});
             scanStarting = false;
             setScanStatus('Camera ready — point at the barcode.', '');
+            setupMainCameraControls();
             return;
           }
           throw e2;
@@ -2502,8 +2547,45 @@
       inst.stop().then(()=>{ try{ inst.clear(); }catch(_){} }).catch(()=>{});
     }
     $('reader').style.display='none';
+    $('btnTorch').style.display='none';
+    $('btnRefocus').style.display='none';
+    mainTorchOn = false;
     resetScanButtons();
   }
+
+  // ---------- torch / refocus (best-effort — only shown when the camera says it supports them) ----------
+  let mainTorchOn = false;
+  function setupMainCameraControls(){
+    let caps = {};
+    try{ caps = html5QrCode ? (html5QrCode.getRunningTrackCapabilities() || {}) : {}; }catch(e){ caps = {}; }
+    if(caps.torch){
+      mainTorchOn = false;
+      $('btnTorch').style.display = 'inline-flex';
+      $('btnTorch').textContent = '🔦 Torch: Off';
+    }else{
+      $('btnTorch').style.display = 'none';
+    }
+    $('btnRefocus').style.display = caps.focusMode ? 'inline-flex' : 'none';
+  }
+  $('btnTorch').addEventListener('click', async ()=>{
+    if(!html5QrCode) return;
+    try{
+      await html5QrCode.applyVideoConstraints({ advanced: [{ torch: !mainTorchOn }] });
+      mainTorchOn = !mainTorchOn;
+      $('btnTorch').textContent = mainTorchOn ? '🔦 Torch: On' : '🔦 Torch: Off';
+    }catch(e){
+      showToast('Could not control the torch on this device.');
+    }
+  });
+  $('btnRefocus').addEventListener('click', async ()=>{
+    if(!html5QrCode) return;
+    try{
+      await html5QrCode.applyVideoConstraints({ advanced: [{ focusMode: 'continuous' }] });
+      setScanStatus('Refocused — point steadily at the barcode.', 'ok');
+    }catch(e){
+      setScanStatus('Could not force a refocus on this device.', 'err');
+    }
+  });
 
   function resetScanButtons(){
     $('btnScanChain').style.display='inline-flex';
@@ -2718,7 +2800,7 @@
     }
     // Skip the autofocus (and the scroll-to-field it triggers on mobile) when
     // we're mid-chain into a serial scan — staying on the camera is what matters.
-    if(!skipFocus) $('fName').focus();
+    if(!skipFocus) $('fSerial').focus();
   }
 
   // ---------- form ----------
@@ -3194,7 +3276,7 @@
       }
       hideFormBanner();
       renderAll();
-      showToast((isRename ? 'Renamed to "' : wasExisting ? 'Updated "' : 'Added "') + name + '" — saving to SharePoint.');
+      showToast((isRename ? 'Renamed to "' : wasExisting ? 'Updated "' : 'Added "') + id + '" — saving to SharePoint.');
       sync('after save');               // upload now if online; otherwise stays queued
     }else{
       if(wasExisting && !isRename) assets[existingIdx] = record; else assets.push(record);
@@ -3207,7 +3289,7 @@
       }
       hideFormBanner();
       renderAll();
-      showToast(isRename ? 'Renamed to "' + name + '" (local).' : wasExisting ? 'Updated "' + name + '" (local).' : 'Added "' + name + '" (local).');
+      showToast(isRename ? 'Renamed to "' + id + '" (local).' : wasExisting ? 'Updated "' + id + '" (local).' : 'Added "' + id + '" (local).');
     }
     return true;
   }
