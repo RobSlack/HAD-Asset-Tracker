@@ -2410,9 +2410,9 @@
 
     // build the report CSV
     const rows = [];
-    stocktakeVerified.forEach(v => rows.push(['Verified', v.id, v.name, stocktakeLocation, '']));
-    missing.forEach(m => rows.push(['Missing', m.id, m.name, stocktakeLocation, '']));
-    stocktakeUnexpected.forEach(u => rows.push(['Unexpected', u.id, u.name, '', u.reason]));
+    stocktakeVerified.forEach(v => rows.push(['Verified', excelTextCell(v.id), v.name, stocktakeLocation, '']));
+    missing.forEach(m => rows.push(['Missing', excelTextCell(m.id), m.name, stocktakeLocation, '']));
+    stocktakeUnexpected.forEach(u => rows.push(['Unexpected', excelTextCell(u.id), u.name, '', u.reason]));
     const csvEsc = (v)=>{ v = String(v==null?'':v); return /[",\n]/.test(v) ? '"' + v.replace(/"/g,'""') + '"' : v; };
     const header = ['Result','Asset Tag','Description','Expected Location','Note'];
     const lines = [header.map(csvEsc).join(',')].concat(rows.map(r=>r.map(csvEsc).join(',')));
@@ -3332,6 +3332,16 @@
     return d.innerHTML;
   }
 
+  // Excel auto-detects purely-numeric-looking CSV cells and strips leading
+  // zeros (and can even reinterpret things like "1E10" as scientific notation).
+  // Wrapping a value as ="VALUE" tells Excel explicitly "this is text, not a
+  // number" — it displays and stores exactly what's inside the quotes. CSV's
+  // own quoting (done by csvEsc afterwards) escapes the quote characters this
+  // introduces, so the two combine correctly into one CSV field.
+  function excelTextCell(v){
+    return '="' + (v==null ? '' : String(v)) + '"';
+  }
+
   // shared by the Inventory grid and the Edit form's Previous/Next navigation,
   // so "next" always means "next in the list you were just looking at"
   function getFilteredSortedAssets(){
@@ -3762,10 +3772,18 @@
     });
   }
 
+  // strip Excel's ="text" wrapper if present, whether from our own export
+  // round-tripping through Excel, or any other CSV someone's fixed up the
+  // same way to stop leading zeros disappearing
+  function stripExcelTextWrapper(raw){
+    const m = String(raw||'').match(/^="(.*)"$/);
+    return m ? m[1] : raw;
+  }
   function buildRecordFromRow(row){
     const val = (key)=>{
       const idx = importMapping[key];
-      return (idx != null && idx >= 0 && row[idx] != null) ? String(row[idx]).trim() : '';
+      const raw = (idx != null && idx >= 0 && row[idx] != null) ? String(row[idx]).trim() : '';
+      return stripExcelTextWrapper(raw);
     };
     let id = val('id');
     const serial = val('serialNumber');
@@ -3958,7 +3976,10 @@
       return /[",\n]/.test(v) ? '"' + v.replace(/"/g,'""') + '"' : v;
     };
     const lines = [cols.join(',')].concat(
-      assets.map(a=>cols.map(c=>csvEsc(a[c])).join(','))
+      assets.map(a=>cols.map(c=>{
+        const v = (c==='id' || c==='serialNumber') ? excelTextCell(a[c]) : a[c];
+        return csvEsc(v);
+      }).join(','))
     );
     const blob = new Blob([lines.join('\n')], {type:'text/csv'});
     const url = URL.createObjectURL(blob);
@@ -3980,7 +4001,10 @@
       return /[",\n]/.test(v) ? '"' + v.replace(/"/g,'""') + '"' : v;
     };
     const lines = [colLabels.map(csvEsc).join(',')].concat(
-      disposed.map(a=>cols.map(c=>csvEsc(a[c])).join(','))
+      disposed.map(a=>cols.map(c=>{
+        const v = (c==='id' || c==='serialNumber') ? excelTextCell(a[c]) : a[c];
+        return csvEsc(v);
+      }).join(','))
     );
     const blob = new Blob([lines.join('\n')], {type:'text/csv'});
     const url = URL.createObjectURL(blob);
@@ -4358,7 +4382,10 @@
       v = String(v);
       return /[",\n]/.test(v) ? '"' + v.replace(/"/g,'""') + '"' : v;
     };
-    const lines = [cols.join(',')].concat(selected.map(a=>cols.map(c=>csvEsc(a[c])).join(',')));
+    const lines = [cols.join(',')].concat(selected.map(a=>cols.map(c=>{
+      const v = (c==='id' || c==='serialNumber') ? excelTextCell(a[c]) : a[c];
+      return csvEsc(v);
+    }).join(',')));
     const blob = new Blob([lines.join('\n')], {type:'text/csv'});
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
