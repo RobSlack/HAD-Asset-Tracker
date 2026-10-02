@@ -478,6 +478,12 @@
     background:var(--amber-tint); border:1px solid #E6C482; color:#7A5310;
     padding:12px 14px; border-radius:8px; font-size:12.5px; line-height:1.55; margin-top:16px;
   }
+  .about-card{margin-top:18px;}
+  .about-grid{display:flex; flex-direction:column; gap:8px; margin-top:4px;}
+  .about-grid > div{display:flex; justify-content:space-between; gap:12px; font-size:13px; padding:6px 0; border-bottom:1px solid var(--border);}
+  .about-grid > div:last-child{border-bottom:none;}
+  .about-label{color:var(--ink-soft); font-weight:600;}
+  .about-value{color:var(--ink);}
   .log-card{padding:20px;}
   .log-card h2{margin:0 0 4px; font-size:15px;}
   .log-card p.hint{margin:0 0 14px; color:var(--ink-soft); font-size:13px;}
@@ -844,6 +850,16 @@
       </div>
       <div class="settings-status" id="tagPrefixesStatus"></div>
     </div>
+
+    <div class="card settings-card about-card">
+      <h2>About this app</h2>
+      <div class="about-grid">
+        <div><span class="about-label">App</span><span class="about-value">Tagbook — Asset Ledger</span></div>
+        <div><span class="about-label">Version</span><span class="about-value mono" id="aboutVersion"></span></div>
+        <div><span class="about-label">Updated</span><span class="about-value" id="aboutBuildDate"></span></div>
+      </div>
+      <p class="hint" style="margin-top:10px;">If something looks out of date, make sure you're on the latest version — ask whoever maintains the app which version they last published.</p>
+    </div>
   </section>
 
   <!-- LOG -->
@@ -1114,6 +1130,13 @@
 
 <script>
 (function(){
+  // Bump these together whenever a change ships, regardless of which file(s)
+  // changed — keeps "what version am I on" meaningful across the live app,
+  // the GitHub-hosted copy, and the starter kit, rather than three separate
+  // counters that silently drift apart.
+  const APP_VERSION = 'v29';
+  const APP_BUILD_DATE = '2026-10-02';
+
   // Storage layer: use Claude's window.storage when present (inside the Claude app),
   // otherwise fall back to the browser's localStorage so the app also runs standalone
   // (e.g. hosted over HTTPS and installed as a phone app). Same async shape either way.
@@ -4411,6 +4434,8 @@
   }
 
   (async function init(){
+    $('aboutVersion').textContent = APP_VERSION;
+    $('aboutBuildDate').textContent = APP_BUILD_DATE;
     await loadConfig();
     await loadLists();
     await loadStaff();
