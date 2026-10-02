@@ -3855,23 +3855,28 @@
       if(k) serialOwner.set(k, a.id);
     });
 
-    importRows.forEach(row=>{
+    // a for-of loop (not forEach) so each row's history entry can be properly
+    // awaited before moving to the next — CSV import previously wrote records
+    // and queued them for SharePoint but never logged anything to history
+    for(const row of importRows){
       const rec = buildRecordFromRow(row);
-      if(!rec.id){ skipped++; return; }
+      if(!rec.id){ skipped++; continue; }
       const serialKey = (rec.serialNumber||'').trim().toLowerCase();
       if(serialKey){
         const owner = serialOwner.get(serialKey);
-        if(owner && owner !== rec.id){ skippedDupeSerial++; return; } // already belongs to a different tag
+        if(owner && owner !== rec.id){ skippedDupeSerial++; continue; } // already belongs to a different tag
       }
       const existingIdx = assets.findIndex(a=>a.id===rec.id);
-      rec.dateAdded = existingIdx>-1 ? assets[existingIdx].dateAdded : now;
+      const prevRecord = existingIdx>-1 ? assets[existingIdx] : null;
+      rec.dateAdded = prevRecord ? prevRecord.dateAdded : now;
       rec.dateUpdated = now;
-      rec.photoCount = existingIdx>-1 ? (assets[existingIdx].photoCount||0) : 0;
+      rec.photoCount = prevRecord ? (prevRecord.photoCount||0) : 0;
       if(existingIdx>-1) assets[existingIdx] = rec; else assets.push(rec);
       newOutboxOps.push({ op:'save', id:rec.id, record:rec, ts:Date.now() });
       if(serialKey) serialOwner.set(serialKey, rec.id);
+      await recordHistoryDiffs(prevRecord, rec, existingIdx>-1);
       imported++;
-    });
+    }
 
     const skipNote = [
       skipped ? skipped + ' with no tag or serial' : '',
